@@ -1,0 +1,7 @@
+gstreamer0.10-ffmpeg (0.10.11-3slp2+5) unstable; urgency=low
+
+  * Initial release
+  * Git: pkgs/g/gstreamer0.10-ffmpeg
+  * Tag: gstreamer0.10-ffmpeg_0.10.11-3slp2+5
+
+ -- Jeongmo Yang <jm80.yang@samsung.com>  Wed, 07 Dec 2011 12:33:53 +0900
