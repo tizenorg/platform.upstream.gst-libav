@@ -313,6 +313,8 @@ else
 #	--disable-encoder=flac --disable-decoder=cavs --disable-protocols --disable-devices\
 #	--disable-network --disable-hwaccels --disable-filters --disable-doc\
 #	--enable-optimizations"
+# ffmpeg cannot support msmpeg4v1 encoder properly.
+#	--enable-encoder=msmpeg4v1
 
 	embffmpeg_configure_args="$embffmpeg_configure_args \
 							  --enable-static --enable-pic --enable-optimizations \
@@ -328,7 +330,6 @@ else
 							  --enable-encoder=h263  \
 							  --enable-encoder=h263p \
 							  --enable-encoder=mpeg4 \
-							  --enable-encoder=msmpeg4v1 \
 							  --enable-encoder=msmpeg4v2 \
 							  --enable-encoder=msmpeg4v3 \
 							  --enable-decoder=aac   \
