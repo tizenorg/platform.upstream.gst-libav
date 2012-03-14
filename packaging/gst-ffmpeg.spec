@@ -5,7 +5,7 @@ Release:    1
 Group:      TO_BE/FILLED_IN
 License:    TO_BE/FILLED_IN
 Source0:    %{name}-%{version}.tar.gz
-BuildRequires:  gettext
+BuildRequires:  gettext-tools
 BuildRequires:  which
 BuildRequires:  prelink
 BuildRequires:  gstreamer-tools
@@ -31,6 +31,7 @@ demuxing 30+ formats and colorspace conversion.
 ./autogen.sh 
 %configure  --disable-static \
 	--disable-nls \
+	--enable-swscale \
 	--prefix=%{_prefix} \
 	--with-html-dir=/tmp/dump
 
@@ -45,6 +46,4 @@ rm -rf %{buildroot}
 %files
 %defattr(-,root,root,-)
 %{_libdir}/gstreamer-0.10/libgstffmpeg.so
-%exclude %{_libdir}/gstreamer-0.10/libgstffmpegscale.so
-%exclude %{_libdir}/gstreamer-0.10/libgstpostproc.so
 
