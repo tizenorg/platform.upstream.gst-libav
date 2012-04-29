@@ -3,9 +3,10 @@ Summary:    FFmpeg plugin for GStreamer
 Version:    0.10.11
 Release:    1
 Group:      TO_BE/FILLED_IN
-License:    TO_BE/FILLED_IN
+License:    LGPLv2+
 Source0:    %{name}-%{version}.tar.gz
-BuildRequires:  gettext-tools
+
+BuildRequires:  gettext
 BuildRequires:  which
 BuildRequires:  prelink
 BuildRequires:  gstreamer-tools
@@ -45,5 +46,4 @@ rm -rf %{buildroot}
 
 %files
 %defattr(-,root,root,-)
-%{_libdir}/gstreamer-0.10/libgstffmpeg.so
-
+/usr/lib/gstreamer-0.10/libgstffmpeg.so
