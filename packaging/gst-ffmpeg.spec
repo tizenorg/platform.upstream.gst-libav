@@ -5,6 +5,7 @@ Release:    1
 Group:      TO_BE/FILLED_IN
 License:    LGPLv2+
 Source0:    %{name}-%{version}.tar.gz
+Source1001: packaging/gst-ffmpeg.manifest 
 
 BuildRequires:  gettext
 BuildRequires:  which
@@ -29,6 +30,7 @@ demuxing 30+ formats and colorspace conversion.
 %setup -q 
 
 %build
+cp %{SOURCE1001} .
 ./autogen.sh 
 %configure  --disable-static \
 	--disable-nls \
@@ -45,5 +47,6 @@ rm -rf %{buildroot}
 
 
 %files
+%manifest gst-ffmpeg.manifest
 %defattr(-,root,root,-)
 /usr/lib/gstreamer-0.10/libgstffmpeg.so
