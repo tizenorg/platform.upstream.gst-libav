@@ -20,8 +20,7 @@ check_PROGRAMS = \
 	generic/plugin-test \
 	generic/libavcodec-locking \
 	elements/ffdec_adpcm \
-	elements/ffdemux_ape \
-	elements/postproc
+	elements/ffdemux_ape
 
 VALGRIND_TO_FIX = \
 	generic/plugin-test \

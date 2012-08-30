@@ -21,10 +21,6 @@
 #include "config.h"
 #endif
 #include "gstffmpegutils.h"
-#include <unistd.h>
-#ifdef __APPLE__
-#include <sys/sysctl.h>
-#endif
 
 G_CONST_RETURN gchar *
 gst_ffmpeg_get_codecid_longname (enum CodecID codec_id)
@@ -241,15 +237,6 @@ gst_ffmpeg_init_pix_fmt_info (void)
   pix_fmt_info[PIX_FMT_PAL8].color_type = FF_COLOR_RGB;
   pix_fmt_info[PIX_FMT_PAL8].pixel_type = FF_PIXEL_PALETTE;
   pix_fmt_info[PIX_FMT_PAL8].depth = 8;
-
-  pix_fmt_info[PIX_FMT_YUVA420P].name = g_strdup ("yuva420p");
-  pix_fmt_info[PIX_FMT_YUVA420P].nb_channels = 4;
-  pix_fmt_info[PIX_FMT_YUVA420P].is_alpha = 1;
-  pix_fmt_info[PIX_FMT_YUVA420P].color_type = FF_COLOR_YUV;
-  pix_fmt_info[PIX_FMT_YUVA420P].pixel_type = FF_PIXEL_PLANAR;
-  pix_fmt_info[PIX_FMT_YUVA420P].depth = 8,
-      pix_fmt_info[PIX_FMT_YUVA420P].x_chroma_shift = 1,
-      pix_fmt_info[PIX_FMT_YUVA420P].y_chroma_shift = 1;
 };
 
 int
@@ -304,25 +291,6 @@ gst_ffmpeg_avpicture_fill (AVPicture * picture,
       GST_DEBUG ("planes %d %d %d", 0, size, size + size2);
       GST_DEBUG ("strides %d %d %d", stride, stride2, stride2);
       return size + 2 * size2;
-    case PIX_FMT_YUVA420P:
-      stride = ROUND_UP_4 (width);
-      h2 = ROUND_UP_X (height, pinfo->y_chroma_shift);
-      size = stride * h2;
-      w2 = DIV_ROUND_UP_X (width, pinfo->x_chroma_shift);
-      stride2 = ROUND_UP_4 (w2);
-      h2 = DIV_ROUND_UP_X (height, pinfo->y_chroma_shift);
-      size2 = stride2 * h2;
-      picture->data[0] = ptr;
-      picture->data[1] = picture->data[0] + size;
-      picture->data[2] = picture->data[1] + size2;
-      picture->data[3] = picture->data[2] + size2;
-      picture->linesize[0] = stride;
-      picture->linesize[1] = stride2;
-      picture->linesize[2] = stride2;
-      picture->linesize[3] = stride;
-      GST_DEBUG ("planes %d %d %d %d", 0, size, size + size2, size + 2 * size2);
-      GST_DEBUG ("strides %d %d %d %d", stride, stride2, stride2, stride);
-      return 2 * size + 2 * size2;
     case PIX_FMT_RGB24:
     case PIX_FMT_BGR24:
       stride = ROUND_UP_4 (width * 3);
@@ -446,38 +414,4 @@ new_aligned_buffer (gint size, GstCaps * caps)
     gst_buffer_set_caps (buf, caps);
 
   return buf;
-}
-
-int
-gst_ffmpeg_auto_max_threads (void)
-{
-  static gsize n_threads = 0;
-  if (g_once_init_enter (&n_threads)) {
-    int n = 1;
-#if defined(_WIN32)
-    {
-      const char *s = getenv ("NUMBER_OF_PROCESSORS");
-      if (s) {
-        n = atoi (s);
-      }
-    }
-#elif defined(__APPLE__)
-    {
-      int mib[] = { CTL_HW, HW_NCPU };
-      size_t dataSize = sizeof (int);
-
-      if (sysctl (mib, 2, &n_threads, &dataSize, NULL, 0)) {
-        n = 1;
-      }
-    }
-#else
-    n = sysconf (_SC_NPROCESSORS_CONF);
-#endif
-    if (n < 1)
-      n = 1;
-
-    g_once_init_leave (&n_threads, n);
-  }
-
-  return (int) (n_threads);
 }

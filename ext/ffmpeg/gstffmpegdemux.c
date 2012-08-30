@@ -42,8 +42,6 @@
 #include "gstffmpegutils.h"
 #include "gstffmpegpipe.h"
 
-#define MAX_STREAMS 20
-
 typedef struct _GstFFMpegDemux GstFFMpegDemux;
 typedef struct _GstFFStream GstFFStream;
 
@@ -152,22 +150,22 @@ gst_ffmpegdemux_averror (gint av_errno)
   const gchar *message = NULL;
 
   switch (av_errno) {
-    case AVERROR (EINVAL):
+    case AVERROR_UNKNOWN:
       message = "Unknown error";
       break;
-    case AVERROR (EIO):
+    case AVERROR_IO:
       message = "Input/output error";
       break;
-    case AVERROR (EDOM):
+    case AVERROR_NUMEXPECTED:
       message = "Number syntax expected in filename";
       break;
-    case AVERROR (ENOMEM):
+    case AVERROR_NOMEM:
       message = "Not enough memory";
       break;
-    case AVERROR (EILSEQ):
+    case AVERROR_NOFMT:
       message = "Unknown format";
       break;
-    case AVERROR (ENOSYS):
+    case AVERROR_NOTSUPP:
       message = "Operation not supported";
       break;
     default:
@@ -460,7 +458,7 @@ gst_ffmpegdemux_do_seek (GstFFMpegDemux * demux, GstSegment * segment)
 
   /* if we need to land on a keyframe, try to do so, we don't try to do a 
    * keyframe seek if we are not absolutely sure we have an index.*/
-  if (segment->flags & GST_SEEK_FLAG_KEY_UNIT) {
+  if (segment->flags & GST_SEEK_FLAG_KEY_UNIT && demux->context->index_built) {
     gint keyframeidx;
 
     GST_LOG_OBJECT (demux, "looking for keyframe in ffmpeg for time %"
@@ -670,12 +668,14 @@ static gboolean
 gst_ffmpegdemux_src_event (GstPad * pad, GstEvent * event)
 {
   GstFFMpegDemux *demux;
+  AVStream *avstream;
   GstFFStream *stream;
   gboolean res = TRUE;
 
   if (!(stream = gst_pad_get_element_private (pad)))
     return FALSE;
 
+  avstream = stream->avstream;
   demux = (GstFFMpegDemux *) gst_pad_get_parent (pad);
 
   switch (GST_EVENT_TYPE (event)) {
@@ -869,7 +869,7 @@ gst_ffmpegdemux_src_convert (GstPad * pad,
     return FALSE;
 
   avstream = stream->avstream;
-  if (avstream->codec->codec_type != AVMEDIA_TYPE_VIDEO)
+  if (avstream->codec->codec_type != CODEC_TYPE_VIDEO)
     return FALSE;
 
   switch (src_fmt) {
@@ -919,7 +919,7 @@ gst_ffmpegdemux_aggregated_flow (GstFFMpegDemux * demux)
     if (s) {
       res = MIN (res, s->last_flow);
 
-      if (s->last_flow == GST_FLOW_OK)
+      if (GST_FLOW_IS_SUCCESS (s->last_flow))
         have_ok = TRUE;
     }
   }
@@ -979,11 +979,11 @@ gst_ffmpegdemux_get_stream (GstFFMpegDemux * demux, AVStream * avstream)
   stream->tags = NULL;
 
   switch (ctx->codec_type) {
-    case AVMEDIA_TYPE_VIDEO:
+    case CODEC_TYPE_VIDEO:
       templ = oclass->videosrctempl;
       num = demux->videopads++;
       break;
-    case AVMEDIA_TYPE_AUDIO:
+    case CODEC_TYPE_AUDIO:
       templ = oclass->audiosrctempl;
       num = demux->audiopads++;
       break;
@@ -1043,7 +1043,7 @@ gst_ffmpegdemux_get_stream (GstFFMpegDemux * demux, AVStream * avstream)
     stream->tags = gst_tag_list_new ();
 
     gst_tag_list_add (stream->tags, GST_TAG_MERGE_REPLACE,
-        (ctx->codec_type == AVMEDIA_TYPE_VIDEO) ?
+        (ctx->codec_type == CODEC_TYPE_VIDEO) ?
         GST_TAG_VIDEO_CODEC : GST_TAG_AUDIO_CODEC, codec, NULL);
   }
 
@@ -1067,10 +1067,6 @@ unknown_caps:
   }
 }
 
-#if 0
-    /* Re-enable once converted to new AVMetaData API
-     * See #566605
-     */
 static gchar *
 my_safe_copy (gchar * input)
 {
@@ -1141,7 +1137,6 @@ gst_ffmpegdemux_read_tags (GstFFMpegDemux * demux)
   }
   return tlist;
 }
-#endif
 
 static gboolean
 gst_ffmpegdemux_open (GstFFMpegDemux * demux)
@@ -1150,12 +1145,7 @@ gst_ffmpegdemux_open (GstFFMpegDemux * demux)
       (GstFFMpegDemuxClass *) G_OBJECT_GET_CLASS (demux);
   gchar *location;
   gint res, n_streams, i;
-#if 0
-  /* Re-enable once converted to new AVMetaData API
-   * See #566605
-   */
   GstTagList *tags;
-#endif
   GstEvent *event;
   GList *cached_events;
 
@@ -1236,17 +1226,12 @@ gst_ffmpegdemux_open (GstFFMpegDemux * demux)
     cached_events = g_list_delete_link (cached_events, cached_events);
   }
 
-#if 0
-  /* Re-enable once converted to new AVMetaData API
-   * See #566605
-   */
   /* grab the global tags */
   tags = gst_ffmpegdemux_read_tags (demux);
   if (tags) {
     GST_INFO_OBJECT (demux, "global tags: %" GST_PTR_FORMAT, tags);
     gst_element_found_tags (GST_ELEMENT (demux), tags);
   }
-#endif
 
   /* now handle the stream tags */
   for (i = 0; i < n_streams; i++) {
@@ -1406,7 +1391,7 @@ gst_ffmpegdemux_loop (GstFFMpegDemux * demux)
   /* prepare to push packet to peer */
   srcpad = stream->pad;
 
-  rawvideo = (avstream->codec->codec_type == AVMEDIA_TYPE_VIDEO &&
+  rawvideo = (avstream->codec->codec_type == CODEC_TYPE_VIDEO &&
       avstream->codec->codec_id == CODEC_ID_RAWVIDEO);
 
   if (rawvideo)
@@ -1458,7 +1443,7 @@ gst_ffmpegdemux_loop (GstFFMpegDemux * demux)
   GST_BUFFER_DURATION (outbuf) = duration;
 
   /* mark keyframes */
-  if (!(pkt.flags & AV_PKT_FLAG_KEY)) {
+  if (!(pkt.flags & PKT_FLAG_KEY)) {
     GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_DELTA_UNIT);
   }
 
@@ -1509,26 +1494,28 @@ pause:
       GST_FFMPEG_PIPE_MUTEX_UNLOCK (ffpipe);
     }
 
-    if (ret == GST_FLOW_UNEXPECTED) {
-      if (demux->segment.flags & GST_SEEK_FLAG_SEGMENT) {
-        gint64 stop;
+    if (GST_FLOW_IS_FATAL (ret) || ret == GST_FLOW_NOT_LINKED) {
+      if (ret == GST_FLOW_UNEXPECTED) {
+        if (demux->segment.flags & GST_SEEK_FLAG_SEGMENT) {
+          gint64 stop;
 
-        if ((stop = demux->segment.stop) == -1)
-          stop = demux->segment.duration;
+          if ((stop = demux->segment.stop) == -1)
+            stop = demux->segment.duration;
 
-        GST_LOG_OBJECT (demux, "posting segment done");
-        gst_element_post_message (GST_ELEMENT (demux),
-            gst_message_new_segment_done (GST_OBJECT (demux),
-                demux->segment.format, stop));
+          GST_LOG_OBJECT (demux, "posting segment done");
+          gst_element_post_message (GST_ELEMENT (demux),
+              gst_message_new_segment_done (GST_OBJECT (demux),
+                  demux->segment.format, stop));
+        } else {
+          GST_LOG_OBJECT (demux, "pushing eos");
+          gst_ffmpegdemux_push_event (demux, gst_event_new_eos ());
+        }
       } else {
-        GST_LOG_OBJECT (demux, "pushing eos");
+        GST_ELEMENT_ERROR (demux, STREAM, FAILED,
+            ("Internal data stream error."),
+            ("streaming stopped, reason %s", gst_flow_get_name (ret)));
         gst_ffmpegdemux_push_event (demux, gst_event_new_eos ());
       }
-    } else if (ret == GST_FLOW_NOT_LINKED || ret < GST_FLOW_UNEXPECTED) {
-      GST_ELEMENT_ERROR (demux, STREAM, FAILED,
-          ("Internal data stream error."),
-          ("streaming stopped, reason %s", gst_flow_get_name (ret)));
-      gst_ffmpegdemux_push_event (demux, gst_event_new_eos ());
     }
     return;
   }
@@ -1911,18 +1898,13 @@ gst_ffmpegdemux_register (GstPlugin * plugin)
       goto next;
 
     /* no network demuxers */
-    if (!strcmp (in_plugin->name, "sdp") ||
-        !strcmp (in_plugin->name, "rtsp") ||
-        !strcmp (in_plugin->name, "applehttp")
-        )
+    if (!strcmp (in_plugin->name, "sdp") || !strcmp (in_plugin->name, "rtsp"))
       goto next;
 
     /* these don't do what one would expect or
      * are only partially functional/useful */
     if (!strcmp (in_plugin->name, "aac") ||
-        !strcmp (in_plugin->name, "wv") ||
-        !strcmp (in_plugin->name, "ass") ||
-        !strcmp (in_plugin->name, "ffmetadata"))
+        !strcmp (in_plugin->name, "wv") || !strcmp (in_plugin->name, "ass"))
       goto next;
 
     /* Don't use the typefind functions of formats for which we already have
@@ -1934,7 +1916,6 @@ gst_ffmpegdemux_register (GstPlugin * plugin)
         !strcmp (in_plugin->name, "mpegvideo") ||
         !strcmp (in_plugin->name, "mp3") ||
         !strcmp (in_plugin->name, "matroska") ||
-        !strcmp (in_plugin->name, "matroska_webm") ||
         !strcmp (in_plugin->name, "mpeg") ||
         !strcmp (in_plugin->name, "wav") ||
         !strcmp (in_plugin->name, "au") ||
@@ -1993,10 +1974,8 @@ gst_ffmpegdemux_register (GstPlugin * plugin)
         !strcmp (in_plugin->name, "yuv4mpegpipe") ||
         !strcmp (in_plugin->name, "mpc") || !strcmp (in_plugin->name, "gif"))
       rank = GST_RANK_MARGINAL;
-    else {
-      GST_DEBUG ("ignoring %s", in_plugin->name);
-      goto next;
-    }
+    else
+      rank = GST_RANK_NONE;
 
     p = name = g_strdup (in_plugin->name);
     while (*p) {

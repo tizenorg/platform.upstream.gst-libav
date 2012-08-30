@@ -151,8 +151,8 @@ plugin_init (GstPlugin * plugin)
 #endif
   gst_ffmpegaudioresample_register (plugin);
 
-  av_register_protocol2 (&gstreamer_protocol, sizeof (URLProtocol));
-  av_register_protocol2 (&gstpipe_protocol, sizeof (URLProtocol));
+  register_protocol (&gstreamer_protocol);
+  register_protocol (&gstpipe_protocol);
 
   /* Now we can return the pointer to the newly created Plugin object. */
   return TRUE;
@@ -162,10 +162,4 @@ GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
     GST_VERSION_MINOR,
     "ffmpeg",
     "All FFmpeg codecs and formats (" FFMPEG_SOURCE ")",
-    plugin_init, PACKAGE_VERSION,
-#ifdef GST_FFMPEG_ENABLE_LGPL
-    "LGPL",
-#else
-    "GPL",
-#endif
-    "FFmpeg", "http://ffmpeg.org/")
+    plugin_init, PACKAGE_VERSION, "LGPL", "FFmpeg", "http://ffmpeg.org/")

@@ -101,7 +101,7 @@ gst_ffmpegdata_peek (URLContext * h, unsigned char *buf, int size)
   GstFlowReturn ret;
   int total = 0;
 
-  g_return_val_if_fail (h->flags == URL_RDONLY, AVERROR (EIO));
+  g_return_val_if_fail (h->flags == URL_RDONLY, AVERROR_IO);
   info = (GstProtocolInfo *) h->priv_data;
 
   GST_DEBUG ("Pulling %d bytes at position %" G_GUINT64_FORMAT, size,
@@ -154,7 +154,7 @@ gst_ffmpegdata_read (URLContext * h, unsigned char *buf, int size)
 }
 
 static int
-gst_ffmpegdata_write (URLContext * h, const unsigned char *buf, int size)
+gst_ffmpegdata_write (URLContext * h, unsigned char *buf, int size)
 {
   GstProtocolInfo *info;
   GstBuffer *outbuf;

@@ -88,13 +88,13 @@ GST_DEBUG_CATEGORY (ffmpegscale_debug);
         GST_VIDEO_CAPS_RGB "; " GST_VIDEO_CAPS_BGR "; " \
         GST_VIDEO_CAPS_xRGB "; " GST_VIDEO_CAPS_xBGR "; " \
         GST_VIDEO_CAPS_ARGB "; " GST_VIDEO_CAPS_ABGR "; " \
-        GST_VIDEO_CAPS_YUV ("{ I420, YUY2, UYVY, Y41B, Y42B }")
+        GST_VIDEO_CAPS_YUV ("{ I420, YUY2, Y41B, Y42B }")
 #else
 #define VIDEO_CAPS \
         GST_VIDEO_CAPS_RGB "; " GST_VIDEO_CAPS_BGR "; " \
         GST_VIDEO_CAPS_RGBx "; " GST_VIDEO_CAPS_BGRx "; " \
         GST_VIDEO_CAPS_RGBA "; " GST_VIDEO_CAPS_BGRA "; " \
-        GST_VIDEO_CAPS_YUV ("{ I420, YUY2, UYVY, Y41B, Y42B }")
+        GST_VIDEO_CAPS_YUV ("{ I420, YUY2, Y41B, Y42B }")
 #endif
 
 static GstStaticPadTemplate src_factory = GST_STATIC_PAD_TEMPLATE ("src",
@@ -313,12 +313,15 @@ static GstCaps *
 gst_ffmpegscale_transform_caps (GstBaseTransform * trans,
     GstPadDirection direction, GstCaps * caps)
 {
+  GstFFMpegScale *scale;
   GstCaps *ret;
   GstStructure *structure;
   const GValue *par;
 
   /* this function is always called with a simple caps */
   g_return_val_if_fail (GST_CAPS_IS_SIMPLE (caps), NULL);
+
+  scale = GST_FFMPEGSCALE (trans);
 
   structure = gst_caps_get_structure (caps, 0);
 
@@ -507,9 +510,6 @@ gst_ffmpeg_caps_to_pixfmt (const GstCaps * caps)
       switch (fourcc) {
         case GST_MAKE_FOURCC ('Y', 'U', 'Y', '2'):
           pix_fmt = PIX_FMT_YUYV422;
-          break;
-        case GST_MAKE_FOURCC ('U', 'Y', 'V', 'Y'):
-          pix_fmt = PIX_FMT_UYVY422;
           break;
         case GST_MAKE_FOURCC ('I', '4', '2', '0'):
           pix_fmt = PIX_FMT_YUV420P;
@@ -819,10 +819,6 @@ plugin_init (GstPlugin * plugin)
 GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
     GST_VERSION_MINOR,
     "ffvideoscale",
-    "videoscaling element (" FFMPEG_SOURCE ")", plugin_init, PACKAGE_VERSION,
-#ifdef GST_FFMPEG_ENABLE_LGPL
-    "LGPL",
-#else
-    "GPL",
-#endif
-    "FFMpeg", "http://ffmpeg.sourceforge.net/")
+    "videoscaling element (" FFMPEG_SOURCE ")",
+    plugin_init,
+    PACKAGE_VERSION, "GPL", "FFMpeg", "http://ffmpeg.sourceforge.net/")

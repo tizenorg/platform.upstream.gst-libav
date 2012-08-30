@@ -35,6 +35,10 @@
 #include "gstffmpegcodecmap.h"
 #include "gstffmpegutils.h"
 
+#ifndef GST_EXT_FFMUX_ENHANCEMENT
+#define GST_EXT_FFMUX_ENHANCEMENT
+#endif /* GST_EXT_FFMUX_ENHANCEMENT */
+
 typedef struct _GstFFMpegMux GstFFMpegMux;
 typedef struct _GstFFMpegMuxPad GstFFMpegMuxPad;
 
@@ -141,9 +145,9 @@ static void gst_ffmpeg_mux_simple_caps_set_int_list (GstCaps * caps,
 
 #define GST_FFMUX_PARAMS_QDATA g_quark_from_static_string("ffmux-params")
 
-#ifdef GST_EXT_FFMUX_ENHANCEMENT
+#ifdef GST_EXT_FFMUX_ENHANCEMENT 
 static void gst_ffmpegmux_release_pad (GstElement * element, GstPad * pad);
-#endif /* GST_EXT_FFMUX_ENHANCEMENT */
+#endif
 
 static GstElementClass *parent_class = NULL;
 
@@ -246,14 +250,14 @@ static void update_expected_trailer_size(GstFFMpegMux *ffmpegmux)
 
 	for (i = 0 ; i < ffmpegmux->context->nb_streams ; i++) {
 		codec_context = ffmpegmux->context->streams[i]->codec;
-		if (codec_context->codec_type == AVMEDIA_TYPE_VIDEO) {
+		if (codec_context->codec_type == CODEC_TYPE_VIDEO) {
 			nb_video_frames += codec_context->frame_number;
 			nb_video_i_frames += codec_context->i_frame_number;
 			nb_stts_entry += codec_context->stts_count;
 
 			video_stream = TRUE;
 			video_codec_id = codec_context->codec_id;
-		} else if (codec_context->codec_type == AVMEDIA_TYPE_AUDIO) {
+		} else if (codec_context->codec_type == CODEC_TYPE_AUDIO) {
 			nb_audio_frames += codec_context->frame_number;
 
 			audio_stream = TRUE;
@@ -352,21 +356,21 @@ static void update_expected_trailer_size(GstFFMpegMux *ffmpegmux)
 		exp_size += (ENTRY_SIZE_VIDEO_STTS * nb_stts_entry) + \
 		            (ENTRY_SIZE_VIDEO_STSS * nb_video_i_frames) + \
 		            ((ENTRY_SIZE_VIDEO_STSZ + ENTRY_SIZE_VIDEO_STCO) * nb_video_frames);
-	}
+       }
 
-	if (audio_stream) {
+       if (audio_stream) {
 		/* Calculate trailer size for audio stream */
 		if (!strcmp(ffmpegmux->context->oformat->name, MUX_ADTS_NAME)) {
 			/* ffmux_adts */
-			exp_size += MUX_ADTS_SIZE_HEADER + (MUX_ADTS_SIZE_ENTRY * nb_audio_frames);
+                       exp_size += MUX_ADTS_SIZE_HEADER + (MUX_ADTS_SIZE_ENTRY * nb_audio_frames);
 		}  else {
 			/* others - ffmux_3gp/mp4/amr */
 			if (audio_codec_id == CODEC_ID_AMR_NB) {
 				/* AMR_NB codec */
-				exp_size += MUX_OTHERS_SIZE_HEADER_AMR + (ENTRY_SIZE_AUDIO_STCO * nb_audio_frames);
+                               exp_size += MUX_OTHERS_SIZE_HEADER_AMR + (ENTRY_SIZE_AUDIO_STCO * nb_audio_frames);
 			} else {
 				/* AAC codec */
-				exp_size += MUX_OTHERS_SIZE_HEADER_AAC + ((ENTRY_SIZE_AUDIO_STSZ + ENTRY_SIZE_AUDIO_STCO) * nb_audio_frames);
+                               exp_size += MUX_OTHERS_SIZE_HEADER_AAC + ((ENTRY_SIZE_AUDIO_STSZ + ENTRY_SIZE_AUDIO_STCO) * nb_audio_frames);
 			}
 		}
 	}
@@ -493,12 +497,12 @@ gst_ffmpegmux_class_init (GstFFMpegMuxClass * klass)
   g_object_class_install_property (gobject_class, PROP_PRELOAD,
       g_param_spec_int ("preload", "preload",
           "Set the initial demux-decode delay (in microseconds)", 0, G_MAXINT,
-          0, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+          0, G_PARAM_READWRITE));
 
   g_object_class_install_property (gobject_class, PROP_MAXDELAY,
       g_param_spec_int ("maxdelay", "maxdelay",
           "Set the maximum demux-decode delay (in microseconds)", 0, G_MAXINT,
-          0, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+          0, G_PARAM_READWRITE));
 
   gstelement_class->request_new_pad = gst_ffmpegmux_request_new_pad;
   gstelement_class->change_state = gst_ffmpegmux_change_state;
@@ -520,7 +524,7 @@ gst_ffmpegmux_class_init (GstFFMpegMuxClass * klass)
       g_param_spec_uint ("number-audio-frames", "Number of audio frames",
           "Current number of audio frames",
           0, G_MAXUINT, 0, G_PARAM_READABLE));
-#endif /* GST_EXT_FFMUX_ENHANCEMENT */
+#endif
 }
 
 static void
@@ -565,28 +569,32 @@ gst_ffmpegmux_release_pad (GstElement * element, GstPad * pad)
   GstFFMpegMux *ffmpegmux = (GstFFMpegMux *) element;
   GstFFMpegMuxPad *collect_pad;
   AVStream *st;
-
+  
   collect_pad = (GstFFMpegMuxPad *) gst_pad_get_element_private (pad);
-
-  GST_DEBUG("Release requested pad[%s:%s]", GST_DEBUG_PAD_NAME(pad));
+  
+  GST_DEBUG("Release requested pad[%s:%s]", GST_DEBUG_PAD_NAME(pad));  
   st = ffmpegmux->context->streams[collect_pad->padnum];
-  if (st) {
-    if (st->codec) {
-	if (st->codec->codec_type == AVMEDIA_TYPE_VIDEO) {
-	  ffmpegmux->videopads--;
-	} else {
+  if(st)
+  {
+    if(st->codec)
+    {
+	if(st->codec->codec_type == CODEC_TYPE_VIDEO)
+	{
+	  ffmpegmux->videopads--;		
+	}
+	else 
+	{
 	  ffmpegmux->audiopads--;
 	}
 	g_free(st->codec);
     }
     ffmpegmux->context->nb_streams--;
     g_free(st);
-  }
-
+ }
   gst_collect_pads_remove_pad (ffmpegmux->collect, pad);
   gst_element_remove_pad (element, pad);
 }
-#endif /* GST_EXT_FFMUX_ENHANCEMENT */
+#endif
 
 static void
 gst_ffmpegmux_set_property (GObject * object, guint prop_id,
@@ -664,7 +672,7 @@ gst_ffmpegmux_request_new_pad (GstElement * element,
   gchar *padname;
   GstPad *pad;
   AVStream *st;
-  enum AVMediaType type;
+  enum CodecType type;
   gint bitrate = 0, framesize = 0;
 
   g_return_val_if_fail (templ != NULL, NULL);
@@ -674,12 +682,12 @@ gst_ffmpegmux_request_new_pad (GstElement * element,
   /* figure out a name that *we* like */
   if (templ == gst_element_class_get_pad_template (klass, "video_%d")) {
     padname = g_strdup_printf ("video_%d", ffmpegmux->videopads++);
-    type = AVMEDIA_TYPE_VIDEO;
+    type = CODEC_TYPE_VIDEO;
     bitrate = 64 * 1024;
     framesize = 1152;
   } else if (templ == gst_element_class_get_pad_template (klass, "audio_%d")) {
     padname = g_strdup_printf ("audio_%d", ffmpegmux->audiopads++);
-    type = AVMEDIA_TYPE_AUDIO;
+    type = CODEC_TYPE_AUDIO;
     bitrate = 285 * 1024;
   } else {
     g_warning ("ffmux: unknown pad template!");
@@ -752,7 +760,7 @@ gst_ffmpegmux_setcaps (GstPad * pad, GstCaps * caps)
 #ifdef GST_EXT_FFMUX_ENHANCEMENT
   /* ref counting bug fix */
   gst_object_unref(ffmpegmux);
-#endif /* GST_EXT_FFMUX_ENHANCEMENT */
+#endif
   GST_LOG_OBJECT (pad, "accepted caps %" GST_PTR_FORMAT, caps);
   return TRUE;
 
@@ -762,7 +770,7 @@ not_accepted:
 #ifdef GST_EXT_FFMUX_ENHANCEMENT
   /* ref counting bug fix */
   gst_object_unref(ffmpegmux);
-#endif /* GST_EXT_FFMUX_ENHANCEMENT */
+#endif
     GST_LOG_OBJECT (pad, "rejecting caps %" GST_PTR_FORMAT, caps);
     return FALSE;
   }
@@ -803,12 +811,7 @@ gst_ffmpegmux_collected (GstCollectPads * pads, gpointer user_data)
   GSList *collected;
   GstFFMpegMuxPad *best_pad;
   GstClockTime best_time;
-#if 0
-  /* Re-enable once converted to new AVMetaData API
-   * See #566605
-   */
   const GstTagList *tags;
-#endif
 
   /* open "file" (gstreamer protocol to next element) */
   if (!ffmpegmux->opened) {
@@ -825,12 +828,12 @@ gst_ffmpegmux_collected (GstCollectPads * pads, gpointer user_data)
       if (st->codec->codec_id == CODEC_ID_NONE) {
         GST_ELEMENT_ERROR (ffmpegmux, CORE, NEGOTIATION, (NULL),
             ("no caps set on stream %d (%s)", collect_pad->padnum,
-                (st->codec->codec_type == AVMEDIA_TYPE_VIDEO) ?
+                (st->codec->codec_type == CODEC_TYPE_VIDEO) ?
                 "video" : "audio"));
         return GST_FLOW_ERROR;
       }
       /* set framerate for audio */
-      if (st->codec->codec_type == AVMEDIA_TYPE_AUDIO) {
+      if (st->codec->codec_type == CODEC_TYPE_AUDIO) {
         switch (st->codec->codec_id) {
           case CODEC_ID_PCM_S16LE:
           case CODEC_ID_PCM_S16BE:
@@ -858,11 +861,6 @@ gst_ffmpegmux_collected (GstCollectPads * pads, gpointer user_data)
         }
       }
     }
-
-#if 0
-    /* Re-enable once converted to new AVMetaData API
-     * See #566605
-     */
 
     /* tags */
     tags = gst_tag_setter_get_tag_list (GST_TAG_SETTER (ffmpegmux));
@@ -899,7 +897,6 @@ gst_ffmpegmux_collected (GstCollectPads * pads, gpointer user_data)
         ffmpegmux->context->track = i;
       }
     }
-#endif
 
     /* set the streamheader flag for gstffmpegprotocol if codec supports it */
     if (!strcmp (ffmpegmux->context->oformat->name, "flv")) {
@@ -977,8 +974,8 @@ gst_ffmpegmux_collected (GstCollectPads * pads, gpointer user_data)
     gboolean need_free = FALSE;
 #ifdef GST_EXT_FFMUX_ENHANCEMENT
     av_init_packet(&pkt);
-    pkt.is_mux = TRUE;
-#endif /* GST_EXT_FFMUX_ENHANCEMENT */
+    pkt.is_mux = 1; // true
+#endif
     /* push out current buffer */
     buf = gst_collect_pads_pop (ffmpegmux->collect,
         (GstCollectData *) best_pad);
@@ -987,16 +984,16 @@ gst_ffmpegmux_collected (GstCollectPads * pads, gpointer user_data)
 
     /* set time */
 #ifdef GST_EXT_FFMUX_ENHANCEMENT
-    if(ffmpegmux->context->streams[best_pad->padnum]->codec->codec_type == AVMEDIA_TYPE_VIDEO) {
+    if(ffmpegmux->context->streams[best_pad->padnum]->codec->codec_type == CODEC_TYPE_VIDEO) {
         pkt.pts = GST_TIME_AS_MSECONDS(GST_BUFFER_TIMESTAMP(buf));
     } else {
         pkt.pts = gst_ffmpeg_time_gst_to_ff(GST_BUFFER_TIMESTAMP(buf),
                                             ffmpegmux->context->streams[best_pad->padnum]->time_base);
     }
-#else /* GST_EXT_FFMUX_ENHANCEMENT */
+#else
     pkt.pts = gst_ffmpeg_time_gst_to_ff (GST_BUFFER_TIMESTAMP (buf),
         ffmpegmux->context->streams[best_pad->padnum]->time_base);
-#endif /* GST_EXT_FFMUX_ENHANCEMENT */
+#endif
     pkt.dts = pkt.pts;
 
     if (strcmp (ffmpegmux->context->oformat->name, "gif") == 0) {
@@ -1026,10 +1023,10 @@ gst_ffmpegmux_collected (GstCollectPads * pads, gpointer user_data)
     pkt.flags = 0;
 
     if (!GST_BUFFER_FLAG_IS_SET (buf, GST_BUFFER_FLAG_DELTA_UNIT))
-      pkt.flags |= AV_PKT_FLAG_KEY;
+      pkt.flags |= PKT_FLAG_KEY;
 
 #ifdef GST_EXT_FFMUX_ENHANCEMENT
-    if (ffmpegmux->context->streams[best_pad->padnum]->codec->codec_type == AVMEDIA_TYPE_VIDEO) {
+    if (ffmpegmux->context->streams[best_pad->padnum]->codec->codec_type == CODEC_TYPE_VIDEO) {
         static int last_duration = -1;
 	static int64_t last_dts = -1;
         if (GST_BUFFER_DURATION_IS_VALID (buf)) {
@@ -1064,14 +1061,14 @@ gst_ffmpegmux_collected (GstCollectPads * pads, gpointer user_data)
     }
 
     update_expected_trailer_size(ffmpegmux);
-#else /* GST_EXT_FFMUX_ENHANCEMENT */
+#else
     if (GST_BUFFER_DURATION_IS_VALID (buf))
       pkt.duration =
           gst_ffmpeg_time_gst_to_ff (GST_BUFFER_DURATION (buf),
           ffmpegmux->context->streams[best_pad->padnum]->time_base);
     else
       pkt.duration = 0;
-#endif /* GST_EXT_FFMUX_ENHANCEMENT */
+#endif
     av_write_frame (ffmpegmux->context, &pkt);
     gst_buffer_unref (buf);
     if (need_free)
@@ -1094,9 +1091,6 @@ gst_ffmpegmux_change_state (GstElement * element, GstStateChange transition)
 {
   GstFlowReturn ret;
   GstFFMpegMux *ffmpegmux = (GstFFMpegMux *) (element);
-#ifdef GST_EXT_FFMUX_ENHANCEMENT
-  int i = 0;
-#endif /* GST_EXT_FFMUX_ENHANCEMENT */
 
   switch (transition) {
     case GST_STATE_CHANGE_NULL_TO_READY:
@@ -1124,15 +1118,16 @@ gst_ffmpegmux_change_state (GstElement * element, GstStateChange transition)
         ffmpegmux->opened = FALSE;
         url_fclose (ffmpegmux->context->pb);
       }
-
 #ifdef GST_EXT_FFMUX_ENHANCEMENT
-      for (i = 0 ; i < ffmpegmux->context->nb_streams ; i++) {
-        ffmpegmux->context->streams[i]->start_time = AV_NOPTS_VALUE;
-        ffmpegmux->context->streams[i]->duration = AV_NOPTS_VALUE;
-        ffmpegmux->context->streams[i]->cur_dts = AV_NOPTS_VALUE;
-      }
-#endif /* GST_EXT_FFMUX_ENHANCEMENT */
+    int i = 0;
+	for(i=0; i < ffmpegmux->context->nb_streams; i++)
+	{
+		ffmpegmux->context->streams[i]->start_time = AV_NOPTS_VALUE;
+		ffmpegmux->context->streams[i]->duration = AV_NOPTS_VALUE;    
+		ffmpegmux->context->streams[i]->cur_dts = AV_NOPTS_VALUE;
 
+	}
+#endif
       break;
     case GST_STATE_CHANGE_READY_TO_NULL:
       break;
@@ -1236,9 +1231,7 @@ gst_ffmpegmux_register (GstPlugin * plugin)
         (!strncmp (in_plugin->name, "alaw", 4)) ||
         (!strncmp (in_plugin->name, "h26", 3)) ||
         (!strncmp (in_plugin->name, "rtp", 3)) ||
-        (!strncmp (in_plugin->name, "ass", 3)) ||
-        (!strncmp (in_plugin->name, "ffmetadata", 10)) ||
-        (!strncmp (in_plugin->name, "srt", 3))
+        (!strncmp (in_plugin->name, "ass", 3))
         ) {
       GST_LOG ("Ignoring muxer %s", in_plugin->name);
       goto next;

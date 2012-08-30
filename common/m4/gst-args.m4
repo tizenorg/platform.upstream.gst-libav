@@ -66,7 +66,10 @@ AC_DEFUN([AG_GST_ARG_VALGRIND],
   if test "x$USE_VALGRIND" = xyes; then
     PKG_CHECK_MODULES(VALGRIND, valgrind >= $VALGRIND_REQ,
       USE_VALGRIND="yes",
-      USE_VALGRIND="no")
+      [
+        USE_VALGRIND="no"
+        AC_MSG_RESULT([no])
+      ])
   fi
   if test "x$USE_VALGRIND" = xyes; then
     AC_DEFINE(HAVE_VALGRIND, 1, [Define if valgrind should be used])

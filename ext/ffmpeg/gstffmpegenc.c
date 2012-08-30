@@ -136,7 +136,7 @@ gst_ffmpegenc_base_init (GstFFMpegEncClass * klass)
   /* construct the element details struct */
   longname = g_strdup_printf ("FFmpeg %s encoder", in_plugin->long_name);
   classification = g_strdup_printf ("Codec/Encoder/%s",
-      (in_plugin->type == AVMEDIA_TYPE_VIDEO) ? "Video" : "Audio");
+      (in_plugin->type == CODEC_TYPE_VIDEO) ? "Video" : "Audio");
   description = g_strdup_printf ("FFmpeg %s encoder", in_plugin->name);
   gst_element_class_set_details_simple (element_class, longname, classification,
       description,
@@ -151,7 +151,7 @@ gst_ffmpegenc_base_init (GstFFMpegEncClass * klass)
     srccaps = gst_caps_new_simple ("unknown/unknown", NULL);
   }
 
-  if (in_plugin->type == AVMEDIA_TYPE_VIDEO) {
+  if (in_plugin->type == CODEC_TYPE_VIDEO) {
     sinkcaps = gst_caps_from_string
         ("video/x-raw-rgb; video/x-raw-yuv; video/x-raw-gray");
   } else {
@@ -193,40 +193,37 @@ gst_ffmpegenc_class_init (GstFFMpegEncClass * klass)
   gobject_class->set_property = gst_ffmpegenc_set_property;
   gobject_class->get_property = gst_ffmpegenc_get_property;
 
-  if (klass->in_plugin->type == AVMEDIA_TYPE_VIDEO) {
+  if (klass->in_plugin->type == CODEC_TYPE_VIDEO) {
     g_object_class_install_property (G_OBJECT_CLASS (klass), ARG_BIT_RATE,
         g_param_spec_ulong ("bitrate", "Bit Rate",
             "Target Video Bitrate", 0, G_MAXULONG, DEFAULT_VIDEO_BITRATE,
-            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+            G_PARAM_READWRITE));
     g_object_class_install_property (G_OBJECT_CLASS (klass), ARG_GOP_SIZE,
         g_param_spec_int ("gop-size", "GOP Size",
             "Number of frames within one GOP", 0, G_MAXINT,
-            DEFAULT_VIDEO_GOP_SIZE,
-            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+            DEFAULT_VIDEO_GOP_SIZE, G_PARAM_READWRITE));
     g_object_class_install_property (G_OBJECT_CLASS (klass), ARG_ME_METHOD,
         g_param_spec_enum ("me-method", "ME Method", "Motion Estimation Method",
-            GST_TYPE_ME_METHOD, ME_EPZS,
-            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+            GST_TYPE_ME_METHOD, ME_EPZS, G_PARAM_READWRITE));
 
     /* FIXME 0.11: Make this property read-only */
     g_object_class_install_property (G_OBJECT_CLASS (klass), ARG_BUFSIZE,
         g_param_spec_ulong ("buffer-size", "Buffer Size",
             "Size of the video buffers. "
             "Note: Setting this property has no effect "
-            "and is deprecated!", 0, G_MAXULONG, 0,
-            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+            "and is deprecated!", 0, G_MAXULONG, 0, G_PARAM_READWRITE));
     g_object_class_install_property (G_OBJECT_CLASS (klass),
         ARG_RTP_PAYLOAD_SIZE, g_param_spec_ulong ("rtp-payload-size",
             "RTP Payload Size", "Target GOB length", 0, G_MAXULONG, 0,
-            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+            G_PARAM_READWRITE));
 
     /* register additional properties, possibly dependent on the exact CODEC */
     gst_ffmpeg_cfg_install_property (klass, ARG_CFG_BASE);
-  } else if (klass->in_plugin->type == AVMEDIA_TYPE_AUDIO) {
+  } else if (klass->in_plugin->type == CODEC_TYPE_AUDIO) {
     g_object_class_install_property (G_OBJECT_CLASS (klass), ARG_BIT_RATE,
         g_param_spec_ulong ("bitrate", "Bit Rate",
             "Target Audio Bitrate", 0, G_MAXULONG, DEFAULT_AUDIO_BITRATE,
-            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+            G_PARAM_READWRITE));
   }
 
   gstelement_class->change_state = gst_ffmpegenc_change_state;
@@ -255,7 +252,7 @@ gst_ffmpegenc_init (GstFFMpegEnc * ffmpegenc)
   ffmpegenc->file = NULL;
   ffmpegenc->delay = g_queue_new ();
 
-  if (oclass->in_plugin->type == AVMEDIA_TYPE_VIDEO) {
+  if (oclass->in_plugin->type == CODEC_TYPE_VIDEO) {
     gst_pad_set_chain_function (ffmpegenc->sinkpad, gst_ffmpegenc_chain_video);
     /* so we know when to flush the buffers on EOS */
     gst_pad_set_event_function (ffmpegenc->sinkpad, gst_ffmpegenc_event_video);
@@ -272,7 +269,7 @@ gst_ffmpegenc_init (GstFFMpegEnc * ffmpegenc)
     ffmpegenc->max_key_interval = 0;
 
     gst_ffmpeg_cfg_set_defaults (ffmpegenc);
-  } else if (oclass->in_plugin->type == AVMEDIA_TYPE_AUDIO) {
+  } else if (oclass->in_plugin->type == CODEC_TYPE_AUDIO) {
     gst_pad_set_chain_function (ffmpegenc->sinkpad, gst_ffmpegenc_chain_audio);
 
     ffmpegenc->bitrate = DEFAULT_AUDIO_BITRATE;
@@ -385,7 +382,7 @@ gst_ffmpegenc_getcaps (GstPad * pad)
   GST_DEBUG_OBJECT (ffmpegenc, "getting caps");
 
   /* audio needs no special care */
-  if (oclass->in_plugin->type == AVMEDIA_TYPE_AUDIO) {
+  if (oclass->in_plugin->type == CODEC_TYPE_AUDIO) {
     caps = gst_caps_copy (gst_pad_get_pad_template_caps (pad));
 
     GST_DEBUG_OBJECT (ffmpegenc, "audio caps, return template %" GST_PTR_FORMAT,
@@ -526,9 +523,6 @@ gst_ffmpegenc_setcaps (GstPad * pad, GstCaps * caps)
   if (ffmpegenc->opened) {
     gst_ffmpeg_avcodec_close (ffmpegenc->context);
     ffmpegenc->opened = FALSE;
-    /* fixed src caps;
-     * so clear src caps for proper (re-)negotiation */
-    gst_pad_set_caps (ffmpegenc->srcpad, NULL);
   }
 
   /* set defaults */
@@ -672,7 +666,7 @@ gst_ffmpegenc_setcaps (GstPad * pad, GstCaps * caps)
   /* we may have failed mapping caps to a pixfmt,
    * and quite some codecs do not make up their own mind about that
    * in any case, _NONE can never work out later on */
-  if (oclass->in_plugin->type == AVMEDIA_TYPE_VIDEO && pix_fmt == PIX_FMT_NONE) {
+  if (oclass->in_plugin->type == CODEC_TYPE_VIDEO && pix_fmt == PIX_FMT_NONE) {
     GST_DEBUG_OBJECT (ffmpegenc, "ffenc_%s: Failed to determine input format",
         oclass->in_plugin->name);
     return FALSE;
@@ -845,8 +839,8 @@ gst_ffmpegenc_chain_video (GstPad * pad, GstBuffer * inbuf)
 
 static GstFlowReturn
 gst_ffmpegenc_encode_audio (GstFFMpegEnc * ffmpegenc, guint8 * audio_in,
-    guint in_size, guint max_size, GstClockTime timestamp,
-    GstClockTime duration, gboolean discont)
+    guint max_size, GstClockTime timestamp, GstClockTime duration,
+    gboolean discont)
 {
   GstBuffer *outbuf;
   AVCodecContext *ctx;
@@ -856,8 +850,7 @@ gst_ffmpegenc_encode_audio (GstFFMpegEnc * ffmpegenc, guint8 * audio_in,
 
   ctx = ffmpegenc->context;
 
-  /* We need to provide at least ffmpegs minimal buffer size */
-  outbuf = gst_buffer_new_and_alloc (max_size + FF_MIN_BUFFER_SIZE);
+  outbuf = gst_buffer_new_and_alloc (max_size);
   audio_out = GST_BUFFER_DATA (outbuf);
 
   GST_LOG_OBJECT (ffmpegenc, "encoding buffer of max size %d", max_size);
@@ -1006,11 +999,11 @@ gst_ffmpegenc_chain_audio (GstPad * pad, GstBuffer * inbuf)
           ctx->sample_rate);
       duration -= (timestamp - ffmpegenc->adapter_ts);
 
-      /* 4 times the input size should be big enough... */
-      out_size = frame_bytes * 4;
+      /* 4 times the input size plus the minimal buffer size
+       * should be big enough... */
+      out_size = frame_bytes * 4 + FF_MIN_BUFFER_SIZE;
 
-      ret =
-          gst_ffmpegenc_encode_audio (ffmpegenc, in_data, frame_bytes, out_size,
+      ret = gst_ffmpegenc_encode_audio (ffmpegenc, in_data, out_size,
           timestamp, duration, ffmpegenc->discont);
 
       gst_adapter_flush (ffmpegenc->adapter, frame_bytes);
@@ -1028,16 +1021,19 @@ gst_ffmpegenc_chain_audio (GstPad * pad, GstBuffer * inbuf)
   } else {
     /* we have no frame_size, feed the encoder all the data and expect a fixed
      * output size */
-    int coded_bps = av_get_bits_per_sample (oclass->in_plugin->id);
+    int coded_bps = av_get_bits_per_sample (oclass->in_plugin->id) / 8;
 
     GST_LOG_OBJECT (ffmpegenc, "coded bps %d, osize %d", coded_bps, osize);
 
     out_size = size / osize;
     if (coded_bps)
-      out_size = (out_size * coded_bps) / 8;
+      out_size *= coded_bps;
+
+    /* We need to provide at least ffmpegs minimal buffer size */
+    out_size += FF_MIN_BUFFER_SIZE;
 
     in_data = (guint8 *) GST_BUFFER_DATA (inbuf);
-    ret = gst_ffmpegenc_encode_audio (ffmpegenc, in_data, size, out_size,
+    ret = gst_ffmpegenc_encode_audio (ffmpegenc, in_data, out_size,
         timestamp, duration, discont);
     gst_buffer_unref (inbuf);
 
@@ -1311,11 +1307,6 @@ gst_ffmpegenc_register (GstPlugin * plugin)
   in_plugin = av_codec_next (NULL);
   while (in_plugin) {
     gchar *type_name;
-
-    /* Skip non-AV codecs */
-    if (in_plugin->type != AVMEDIA_TYPE_AUDIO &&
-        in_plugin->type != AVMEDIA_TYPE_VIDEO)
-      goto next;
 
     /* no quasi codecs, please */
     if (in_plugin->id == CODEC_ID_RAWVIDEO ||

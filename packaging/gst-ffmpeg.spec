@@ -1,9 +1,9 @@
-#sbs-git:slp/pkgs/g/gstreamer0.10-ffmpeg gst-ffmpeg 0.10.13 eab91d2292960a6c9af3b27ca939ad65a4418984
+#sbs-git:slp/pkgs/g/gstreamer0.10-ffmpeg gst-ffmpeg 0.10.11 eab91d2292960a6c9af3b27ca939ad65a4418984
 Name:       gst-ffmpeg
 Summary:    FFmpeg plugin for GStreamer
-Version:    0.10.13
-Release:    3
-Group:      Applications/Multimedia
+Version:    0.10.11
+Release:    11
+Group:      TO_BE/FILLED_IN
 License:    LGPLv2+
 Source0:    %{name}-%{version}.tar.gz
 #Patch0:     gst-ffmpeg-autotools.patch
@@ -11,7 +11,6 @@ Source0:    %{name}-%{version}.tar.gz
 #Patch2:     gst-ffmpeg-swscale-pc.patch
 BuildRequires:  gettext
 BuildRequires:  which
-BuildRequires:  prelink
 BuildRequires:  gstreamer-tools
 BuildRequires:  gst-plugins-base-devel  
 BuildRequires:  pkgconfig(gstreamer-0.10) 
@@ -35,20 +34,11 @@ demuxing 30+ formats and colorspace conversion.
 #%patch2 -p1
 
 %build
-./autogen.sh
-
-export CFLAGS+=" -Wall -g -fPIC\
- -DGST_EXT_FFMUX_ENHANCEMENT\
- -DFFDEC_RANK_MODIFICATION"
-
-%configure --prefix=%{_prefix}\
- --disable-static\
- --disable-nls\
- --enable-lgpl\
- --disable-version3\
- --disable-gpl\
- --disable-nonfree\
- --with-html-dir=/tmp/dump
+./autogen.sh 
+%configure  --disable-static \
+	--disable-nls \
+	--prefix=%{_prefix} \
+	--with-html-dir=/tmp/dump
 
 
 make %{?jobs:-j%jobs}
@@ -61,4 +51,3 @@ rm -rf %{buildroot}
 %files
 %defattr(-,root,root,-)
 /usr/lib/gstreamer-0.10/libgstffmpeg.so
-/usr/lib/gstreamer-0.10/libgstffmpegscale.so
