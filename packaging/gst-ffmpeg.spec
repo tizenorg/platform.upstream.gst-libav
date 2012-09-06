@@ -2,7 +2,7 @@
 Name:       gst-ffmpeg
 Summary:    FFmpeg plugin for GStreamer
 Version:    0.10.11
-Release:    11
+Release:    12
 Group:      TO_BE/FILLED_IN
 License:    LGPLv2+
 Source0:    %{name}-%{version}.tar.gz
