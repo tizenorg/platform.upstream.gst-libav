@@ -1,0 +1,33 @@
+Source: gstreamer0.10-ffmpeg
+Section: libs
+Priority: optional
+Maintainer: Seungbae Shin <seungbae.shin@samsung.com>, JongHyuk Choi <jhchoi.choi@samsung.com>, Jeongmo Yang <jm80.yang@samsung.com>
+Build-Depends: debhelper (>= 5),
+               autotools-dev,
+               zlib1g-dev,
+               libglib2.0-dev (>= 2.4.0),
+               pkg-config (>= 0.11.0),
+               libgstreamer0.10-dev (>= 0.10.22),
+               libgstreamer-plugins-base0.10-dev (>= 0.10.22),
+               liboil0.3-dev (>= 0.3.6),
+               gstreamer-tools (>= 0.10.14), libvorbis-dev, libtheora-dev, execstack
+Standards-Version: 3.8.0
+
+Package: gstreamer0.10-ffmpeg
+Architecture: any
+Section: libs
+Depends: ${misc:Depends},
+         ${shlibs:Depends}
+Provides: ${gstreamer:Provides}
+Description: FFmpeg plugin for GStreamer
+ This GStreamer plugin supports a large number of audio and video compression
+ formats through the use of the FFmpeg library.  The plugin contains GStreamer
+# elements for encoding 40+ formats (MPEG, DivX, MPEG4, AC3, DV, ...), decoding
+ elements for decoding 90+ formats (AVI, MPEG, OGG, Matroska, ASF, ...),
+ demuxing 30+ formats and colorspace conversion.
+
+Package: gstreamer0.10-ffmpeg-dbg
+Section: debug
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, gstreamer0.10-ffmpeg (= ${Source-Version})
+Description: FFmpeg plugin for GStreamer (unstripped)
