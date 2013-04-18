@@ -347,7 +347,7 @@ else
                            --enable-decoder=sipr \
                            --enable-decoder=ra_144 \
                            --enable-decoder=ra_288 \
-							  --enable-decoder=mpegvideo \
+							  --disable-decoder=mpegvideo \
 							  --enable-decoder=msmpeg4v1  \
 							  --enable-decoder=msmpeg4v2  \
 							  --enable-decoder=msmpeg4v3  \
