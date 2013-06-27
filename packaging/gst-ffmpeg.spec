@@ -6,14 +6,10 @@ Release:    19
 Group:      Application/Multimedia
 License:    LGPLv2+
 Source0:    %{name}-%{version}.tar.gz
-#Patch0:     gst-ffmpeg-autotools.patch
-#Patch1:     gst-ffmpeg-ffmux-ehancement.patch
-#Patch2:     gst-ffmpeg-swscale-pc.patch
 BuildRequires:  gettext
 BuildRequires:  which
-BuildRequires:  gstreamer-tools
-BuildRequires:  gst-plugins-base-devel  
 BuildRequires:  pkgconfig(gstreamer-0.10) 
+BuildRequires:  pkgconfig(gstreamer-plugins-base-0.10) 
 BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  pkgconfig(zlib)
 BuildRequires:  pkgconfig(vorbis)
@@ -28,9 +24,6 @@ demuxing 30+ formats and colorspace conversion.
 
 %prep
 %setup -q 
-#%patch0 -p1
-#%patch1 -p1
-#%patch2 -p1
 
 %build
 ./autogen.sh 
