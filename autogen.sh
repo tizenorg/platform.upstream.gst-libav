@@ -96,7 +96,7 @@ test ! -z "$CONFIGURE_EXT_OPT" && echo "  ./configure external flags: $CONFIGURE
 test ! -z "$CONFIGURE_FILE_OPT" && echo "  ./configure enable/disable flags: $CONFIGURE_FILE_OPT"
 echo
 
-./configure $CONFIGURE_DEF_OPT $CONFIGURE_EXT_OPT $CONFIGURE_FILE_OPT || {
+./configure $CONFIGURE_DEF_OPT $CONFIGURE_EXT_OPT $CONFIGURE_FILE_OPT --with-system-libav || {
         echo "  configure failed"
         exit 1
 }
