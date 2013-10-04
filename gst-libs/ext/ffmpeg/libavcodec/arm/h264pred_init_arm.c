@@ -72,5 +72,7 @@ static void ff_h264_pred_init_neon(H264PredContext *h, int codec_id)
 
 void ff_h264_pred_init_arm(H264PredContext *h, int codec_id)
 {
-    if (HAVE_NEON)    ff_h264_pred_init_neon(h, codec_id);
+#if HAVE_NEON
+    ff_h264_pred_init_neon(h, codec_id);
+#endif
 }

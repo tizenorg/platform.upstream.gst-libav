@@ -122,5 +122,7 @@ static void ff_h264dsp_init_neon(H264DSPContext *c)
 
 void ff_h264dsp_init_arm(H264DSPContext *c)
 {
-    if (HAVE_NEON) ff_h264dsp_init_neon(c);
+#if HAVE_NEON
+    ff_h264dsp_init_neon(c);
+#endif
 }
