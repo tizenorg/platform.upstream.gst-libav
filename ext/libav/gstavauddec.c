@@ -909,7 +909,7 @@ gst_ffmpegauddec_register (GstPlugin * plugin)
         rank = GST_RANK_SECONDARY;
         break;
       case AV_CODEC_ID_MP3:
-        rank = GST_RANK_NONE;
+        rank = GST_RANK_PRIMARY;
         break;
       default:
         rank = GST_RANK_MARGINAL;
