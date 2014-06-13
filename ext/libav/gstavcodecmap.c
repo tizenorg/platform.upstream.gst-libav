@@ -66,6 +66,28 @@ static const struct
   AV_CH_STEREO_RIGHT, GST_AUDIO_CHANNEL_POSITION_FRONT_RIGHT}
 };
 
+GType
+gst_ffmpeg_compliance_get_type (void)
+{
+  static GType ffmpeg_compliance_type = 0;
+  static const GEnumValue compliance_types[] = {
+    {GST_FFMPEG_VERY_STRICT, "Strictly conform to older spec",
+        "verystrict"},
+    {GST_FFMPEG_STRICT, "Strictly conform to current spec", "strict"},
+    {GST_FFMPEG_NORMAL, "Normal behavior", "normal"},
+    {GST_FFMPEG_UNOFFICIAL, "Allow unofficial extensions", "unofficial"},
+    {GST_FFMPEG_EXPERIMENTAL, "Allow nonstandardized experimental things",
+        "experimental"},
+    {0, NULL, NULL}
+  };
+
+  if (!ffmpeg_compliance_type) {
+    ffmpeg_compliance_type =
+        g_enum_register_static ("GstFFMpegCompliance", compliance_types);
+  }
+  return ffmpeg_compliance_type;
+}
+
 static guint64
 gst_ffmpeg_channel_positions_to_layout (GstAudioChannelPosition * pos,
     gint channels)
@@ -159,6 +181,22 @@ gst_ffmpeg_channel_layout_to_gst (guint64 channel_layout, gint channels,
   return TRUE;
 }
 
+static gboolean
+_gst_value_list_contains (const GValue * list, const GValue * value)
+{
+  guint i, n;
+  const GValue *tmp;
+
+  n = gst_value_list_get_size (list);
+  for (i = 0; i < n; i++) {
+    tmp = gst_value_list_get_value (list, i);
+    if (gst_value_compare (value, tmp) == GST_VALUE_EQUAL)
+      return TRUE;
+  }
+
+  return FALSE;
+}
+
 static void
 gst_ffmpeg_video_set_pix_fmts (GstCaps * caps, const enum AVPixelFormat *fmts)
 {
@@ -191,7 +229,9 @@ gst_ffmpeg_video_set_pix_fmts (GstCaps * caps, const enum AVPixelFormat *fmts)
     format = gst_ffmpeg_pixfmt_to_videoformat (*fmts);
     if (format != GST_VIDEO_FORMAT_UNKNOWN) {
       g_value_set_string (&v, gst_video_format_to_string (format));
-      gst_value_list_append_value (&va, &v);
+      /* Only append values we don't have yet */
+      if (!_gst_value_list_contains (&va, &v))
+        gst_value_list_append_value (&va, &v);
     }
     fmts++;
   }
@@ -452,7 +492,9 @@ gst_ffmpeg_audio_set_sample_fmts (GstCaps * caps,
     format = gst_ffmpeg_smpfmt_to_audioformat (*fmts);
     if (format != GST_AUDIO_FORMAT_UNKNOWN) {
       g_value_set_string (&v, gst_audio_format_to_string (format));
-      gst_value_list_append_value (&va, &v);
+      /* Only append values we don't have yet */
+      if (!_gst_value_list_contains (&va, &v))
+        gst_value_list_append_value (&va, &v);
     }
     fmts++;
   }
@@ -480,20 +522,18 @@ gst_ff_aud_caps_new (AVCodecContext * context, AVCodec * codec,
   /* fixed, non-probing context */
   if (context != NULL && context->channels != -1) {
     GstAudioChannelPosition pos[64];
+    guint64 mask;
 
     caps = gst_caps_new_simple (mimetype,
         "rate", G_TYPE_INT, context->sample_rate,
         "channels", G_TYPE_INT, context->channels, NULL);
 
-    if (gst_ffmpeg_channel_layout_to_gst (context->channel_layout,
-            context->channels, pos)) {
-      guint64 mask;
-
-      if (gst_audio_channel_positions_to_mask (pos, context->channels, FALSE,
-              &mask)) {
-        gst_caps_set_simple (caps, "channel-mask", GST_TYPE_BITMASK, mask,
-            NULL);
-      }
+    if (context->channels > 1 &&
+        gst_ffmpeg_channel_layout_to_gst (context->channel_layout,
+            context->channels, pos) &&
+        gst_audio_channel_positions_to_mask (pos, context->channels, FALSE,
+            &mask)) {
+      gst_caps_set_simple (caps, "channel-mask", GST_TYPE_BITMASK, mask, NULL);
     }
   } else if (encode) {
     gint maxchannels = 2;
@@ -913,7 +953,7 @@ gst_ffmpeg_codecid_to_caps (enum CodecID codec_id,
     case AV_CODEC_ID_LJPEG:
       caps =
           gst_ff_vid_caps_new (context, NULL, codec_id, encode, "image/jpeg",
-          NULL);
+          "parsed", G_TYPE_BOOLEAN, TRUE, NULL);
       break;
 
     case AV_CODEC_ID_SP5X:
@@ -2511,8 +2551,14 @@ gst_ffmpeg_videoinfo_to_context (GstVideoInfo * info, AVCodecContext * context)
   context->bits_per_coded_sample = bpp;
 
   context->ticks_per_frame = 1;
-  context->time_base.den = GST_VIDEO_INFO_FPS_N (info);
-  context->time_base.num = GST_VIDEO_INFO_FPS_D (info);
+  if (GST_VIDEO_INFO_FPS_N (info) == 0) {
+    GST_DEBUG ("Using 25/1 framerate");
+    context->time_base.den = 25;
+    context->time_base.num = 1;
+  } else {
+    context->time_base.den = GST_VIDEO_INFO_FPS_N (info);
+    context->time_base.num = GST_VIDEO_INFO_FPS_D (info);
+  }
 
   context->sample_aspect_ratio.num = GST_VIDEO_INFO_PAR_N (info);
   context->sample_aspect_ratio.den = GST_VIDEO_INFO_PAR_D (info);
@@ -2850,9 +2896,9 @@ gst_ffmpeg_caps_with_codecid (enum CodecID codec_id,
         gint halfpel_flag, thirdpel_flag, low_delay, unknown_svq3_flag;
         guint16 flags;
 
-        if (gst_structure_get_int (str, "halfpel_flag", &halfpel_flag) ||
-            gst_structure_get_int (str, "thirdpel_flag", &thirdpel_flag) ||
-            gst_structure_get_int (str, "low_delay", &low_delay) ||
+        if (gst_structure_get_int (str, "halfpel_flag", &halfpel_flag) &&
+            gst_structure_get_int (str, "thirdpel_flag", &thirdpel_flag) &&
+            gst_structure_get_int (str, "low_delay", &low_delay) &&
             gst_structure_get_int (str, "unknown_svq3_flag",
                 &unknown_svq3_flag)) {
           context->extradata = (guint8 *) av_mallocz (0x64);

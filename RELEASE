@@ -1,7 +1,7 @@
 
-Release notes for GStreamer libav Plugins 1.2.0
+Release notes for GStreamer libav Plugins 1.2.2
 
-The GStreamer team is proud to announce a new feature release
+The GStreamer team is proud to announce a new bug-fix release
 in the 1.x stable series of the
 core of the GStreamer streaming media framework.
 
@@ -36,8 +36,12 @@ contains a set of less supported plugins that haven't passed the
 
   
 
-There were no bugs fixed in this release
-    
+Bugs fixed in this release
+     
+      * 691617 : avenc_aac: errors out with " encoder not initialized " 
+      * 693772 : avdec: decoder frame list getting long
+      * 697806 : avdec_h264 Fails during error recovery after packet loss leading to stream corruption
+      * 704161 : avviddec: should use upstream fps only if valid
 
 ==== Download ====
 

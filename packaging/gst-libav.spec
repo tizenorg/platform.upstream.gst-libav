@@ -1,6 +1,6 @@
 Name:       gst-libav
 Summary:    Libav plugin for GStreamer
-Version:    1.2.0
+Version:    1.2.2
 Release:    1
 Group:      Multimedia/Libraries
 License:    GPL-2.0
@@ -34,12 +34,13 @@ demuxing 30+ formats and colorspace conversion.
 
 %build
 chmod +x gst-libs/ext/libav/configure
-./autogen.sh
+./autogen.sh --noconfigure
 
 export CFLAGS+=" -Wall -g -fPIC\
  -DLIBAV_RANK_MODIFICATION"
 
 %configure  --disable-static \
+            --disable-gtk-doc \
 	--prefix=%{_prefix} \
 	--with-html-dir=/tmp/dump
 

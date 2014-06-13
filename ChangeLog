@@ -1,9 +1,168 @@
-=== release 1.2.0 ===
+=== release 1.2.2 ===
 
-2013-09-24  Sebastian Dröge <sebastian.droege@collabora.co.uk>
+2013-12-26  Sebastian Dröge <slomo@coaxion.net>
 
 	* configure.ac:
-	  releasing 1.2.0
+	  releasing 1.2.2
+
+2013-12-07 11:35:09 +0100  Mark Nauwelaerts <mnauw@users.sourceforge.net>
+
+	* ext/libav/gstavviddec.c:
+	  avviddec: improve buffer handling and semantics
+	  ... so as to focus on providing *a* buffer rather than one (too) tied
+	  to a frame, in particular allowing multiple allocations related to a frame.
+	  Fixes https://bugzilla.gnome.org/show_bug.cgi?id=697806
+
+2013-11-26 20:57:37 +0100  Mark Nauwelaerts <mnauw@users.sourceforge.net>
+
+	* ext/libav/gstavviddec.c:
+	  avviddec: discard unused input frames
+	  ... to avoid these piling up in list of pending frames.
+	  Fixes https://bugzilla.gnome.org/show_bug.cgi?id=693772
+
+2013-11-26 20:55:43 +0100  Mark Nauwelaerts <mnauw@users.sourceforge.net>
+
+	* ext/libav/gstavviddec.c:
+	  avviddec: really release frame at proper time
+	  ... by also removing it from the pending list of frames,
+	  where it may still be in if it has never been submitted to _finish.
+	  This could happen if is a decode-only frame, or in skipped decoding
+	  situation, ...
+	  Fixes https://bugzilla.gnome.org/show_bug.cgi?id=693772
+
+2013-12-07 12:10:13 +0100  Mark Nauwelaerts <mnauw@users.sourceforge.net>
+
+	* ext/libav/gstavvidenc.c:
+	  avvidenc: plug input_state leak
+
+2013-12-02 20:21:34 +0100  Mark Nauwelaerts <mnauw@users.sourceforge.net>
+
+	* ext/libav/gstavviddec.c:
+	  avviddec: only use upstream framerate if really specified
+	  Fixes https://bugzilla.gnome.org/show_bug.cgi?id=704161
+
+2013-10-26 09:34:30 +0100  Tim-Philipp Müller <tim@centricular.com>
+
+	* ext/libav/gstavaudenc.c:
+	  avaudenc: post better error message if experimental codecs don't work
+	  https://bugzilla.gnome.org/show_bug.cgi?id=691617
+
+2013-10-26 09:09:28 +0100  Tim-Philipp Müller <tim@centricular.com>
+
+	* ext/libav/gstavcodecmap.c:
+	  codecmap: use TRUE for boolean fields in caps
+
+2013-10-14 14:50:57 -0600  Greg Rutz <greg@gsr-tek.com>
+
+	* ext/libav/gstavaudenc.c:
+	* ext/libav/gstavaudenc.h:
+	* ext/libav/gstavcodecmap.c:
+	* ext/libav/gstavcodecmap.h:
+	* ext/libav/gstavvidenc.c:
+	* ext/libav/gstavvidenc.h:
+	  avenc: Add compliance property
+	  Add a new property to GstFFMpegVidEnc and GstFFMpegAudEnc to supply
+	  the "strict compliance" value to AVCodecContext
+	  https://bugzilla.gnome.org/show_bug.cgi?id=691617
+
+=== release 1.2.1 ===
+
+2013-11-09 16:02:14 +0100  Sebastian Dröge <sebastian@centricular.com>
+
+	* ChangeLog:
+	* NEWS:
+	* RELEASE:
+	* configure.ac:
+	* gst-libav.doap:
+	  Release 1.2.1
+
+2013-11-04 23:20:17 +0000  Tim-Philipp Müller <tim@centricular.com>
+
+	* ext/libav/gstavcodecmap.c:
+	  avaudec: don't put bogus 0 channel-mask on output caps for mono audio
+
+2013-10-15 09:28:08 +0200  Sebastian Dröge <slomo@circular-chaos.org>
+
+	* gst-libs/ext/libav:
+	  libav: Update to v9.10
+
+2013-10-02 13:59:04 +0200  Sebastian Dröge <slomo@circular-chaos.org>
+
+	* ext/libav/gstavcodecmap.c:
+	  avcodecmap: gst_value_can_intersect() does not do what you would think
+	  Check for uniqueness differently now.
+
+2013-10-02 12:57:36 +0200  Sebastian Dröge <slomo@circular-chaos.org>
+
+	* ext/libav/gstavcodecmap.c:
+	  avcodecmap: Only append values to the video/audio format lists if we don't have them already
+
+2013-10-02 12:52:35 +0200  Sebastian Dröge <slomo@circular-chaos.org>
+
+	* ext/libav/gstavviddec.c:
+	  avviddec: Reset some more fields in ::stop()
+
+2013-10-02 12:51:40 +0200  Sebastian Dröge <slomo@circular-chaos.org>
+
+	* ext/libav/gstavviddec.c:
+	  avviddec: Don't believe we're negotiated if negotiation failed
+	  It can happen that negotiation fails during get_buffer(), but then
+	  we don't retry later and never return NOT_NEGOTIATED upstream...
+	  and instead run into assertions.
+
+2013-10-02 12:45:44 +0200  Sebastian Dröge <slomo@circular-chaos.org>
+
+	* ext/libav/gstavauddec.c:
+	  avauddec: Don't believe we're negotiated if negotiation failed
+	  It can happen that negotiation fails during get_buffer(), but then
+	  we don't retry later and never return NOT_NEGOTIATED upstream...
+	  and instead run into assertions.
+	  https://bugzilla.gnome.org/show_bug.cgi?id=708769
+
+2013-10-01 22:38:32 +0200  Sebastian Dröge <slomo@circular-chaos.org>
+
+	* ext/libav/gstavcodecmap.c:
+	  avenc: Choose 25 fps if we don't have any in the caps
+	  Some encoders require a non-zero framerate to be configured properly
+	  and just choosing something will make them not fail completely at
+	  least.
+	  https://bugzilla.gnome.org/show_bug.cgi?id=708732
+
+2013-10-03 15:25:30 +0100  Matthieu Bouron <matthieu.bouron@collabora.com>
+
+	* ext/libav/gstavcodecmap.c:
+	  avcodecmap: Make avdec_mjpeg requires a parsed input
+	  Actually avdec_mjpeg does not deal well with incomplete buffers and try
+	  to decode incomplete frames. A parser which will also acts as
+	  an accumulator needs to be inserted before it.
+	  https://bugzilla.gnome.org/show_bug.cgi?id=709352
+
+2013-09-23 15:19:51 +0200  Sebastian Dröge <slomo@circular-chaos.org>
+
+	* ext/libav/gstavcodecmap.c:
+	  avcodecmap: Fix boolean expression to fix uninitialized usage of variables
+
+2013-09-23 15:08:18 +0200  Sebastian Dröge <slomo@circular-chaos.org>
+
+	* configure.ac:
+	  configure: Chose right target-os for iOS
+
+2013-09-24 17:26:35 +0100  Tim-Philipp Müller <tim@centricular.net>
+
+	* common:
+	  Automatic update of common submodule
+	  From 6b03ba7 to 7412249
+
+=== release 1.2.0 ===
+
+2013-09-24 14:42:30 +0200  Sebastian Dröge <slomo@circular-chaos.org>
+
+	* ChangeLog:
+	* NEWS:
+	* RELEASE:
+	* configure.ac:
+	* gst-libav.doap:
+	  Release 1.2.0
 
 2013-09-20 16:18:03 +0200  Edward Hervey <edward@collabora.com>
 

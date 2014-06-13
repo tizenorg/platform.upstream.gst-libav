@@ -52,6 +52,7 @@ enum
   PROP_0,
   PROP_BIT_RATE,
   PROP_RTP_PAYLOAD_SIZE,
+  PROP_COMPLIANCE,
 };
 
 /* A number of function prototypes are given so we can refer to them later. */
@@ -151,6 +152,11 @@ gst_ffmpegaudenc_class_init (GstFFMpegAudEncClass * klass)
       g_param_spec_int ("bitrate", "Bit Rate",
           "Target Audio Bitrate", 0, G_MAXINT, DEFAULT_AUDIO_BITRATE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_COMPLIANCE,
+      g_param_spec_enum ("compliance", "Compliance",
+          "Adherence of the encoder to the specifications",
+          GST_TYPE_FFMPEG_COMPLIANCE, FFMPEG_DEFAULT_COMPLIANCE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   gobject_class->finalize = gst_ffmpegaudenc_finalize;
 
@@ -173,6 +179,8 @@ gst_ffmpegaudenc_init (GstFFMpegAudEnc * ffmpegaudenc)
   /* ffmpeg objects */
   ffmpegaudenc->context = avcodec_alloc_context3 (klass->in_plugin);
   ffmpegaudenc->opened = FALSE;
+
+  ffmpegaudenc->compliance = FFMPEG_DEFAULT_COMPLIANCE;
 
   gst_audio_encoder_set_drainable (GST_AUDIO_ENCODER (ffmpegaudenc), TRUE);
 }
@@ -265,7 +273,7 @@ gst_ffmpegaudenc_set_format (GstAudioEncoder * encoder, GstAudioInfo * info)
   }
 
   /* if we set it in _getcaps we should set it also in _link */
-  ffmpegaudenc->context->strict_std_compliance = -1;
+  ffmpegaudenc->context->strict_std_compliance = ffmpegaudenc->compliance;
 
   /* user defined properties */
   if (ffmpegaudenc->bitrate > 0) {
@@ -316,6 +324,16 @@ gst_ffmpegaudenc_set_format (GstAudioEncoder * encoder, GstAudioInfo * info)
     if (avcodec_get_context_defaults3 (ffmpegaudenc->context,
             oclass->in_plugin) < 0)
       GST_DEBUG_OBJECT (ffmpegaudenc, "Failed to set context defaults");
+
+    if ((oclass->in_plugin->capabilities & CODEC_CAP_EXPERIMENTAL) &&
+        ffmpegaudenc->compliance != GST_FFMPEG_EXPERIMENTAL) {
+      GST_ELEMENT_ERROR (ffmpegaudenc, LIBRARY, SETTINGS,
+          ("Codec is experimental, but settings don't allow encoders to "
+              "produce output of experimental quality"),
+          ("This codec may not create output that is conformant to the specs "
+              "or of good quality. If you must use it anyway, set the "
+              "compliance property to experimental"));
+    }
     return FALSE;
   }
 
@@ -406,97 +424,107 @@ gst_ffmpegaudenc_encode_audio (GstFFMpegAudEnc * ffmpegaudenc,
 
   ctx = ffmpegaudenc->context;
 
-  GST_LOG_OBJECT (ffmpegaudenc, "encoding buffer ");
+  GST_LOG_OBJECT (ffmpegaudenc, "encoding buffer %p size:%u", audio_in,
+      in_size);
 
   memset (&pkt, 0, sizeof (pkt));
-  memset (&frame, 0, sizeof (frame));
-  avcodec_get_frame_defaults (&frame);
 
-  info = gst_audio_encoder_get_audio_info (enc);
-  planar = av_sample_fmt_is_planar (ffmpegaudenc->context->sample_fmt);
+  if (audio_in != NULL) {
+    memset (&frame, 0, sizeof (frame));
+    avcodec_get_frame_defaults (&frame);
 
-  if (planar && info->channels > 1) {
-    gint channels, nsamples;
-    gint i, j;
+    info = gst_audio_encoder_get_audio_info (enc);
+    planar = av_sample_fmt_is_planar (ffmpegaudenc->context->sample_fmt);
 
-    nsamples = frame.nb_samples = in_size / info->bpf;
-    channels = info->channels;
+    if (planar && info->channels > 1) {
+      gint channels, nsamples;
+      gint i, j;
 
-    if (info->channels > AV_NUM_DATA_POINTERS) {
-      frame.extended_data = g_new (uint8_t *, info->channels);
+      nsamples = frame.nb_samples = in_size / info->bpf;
+      channels = info->channels;
+
+      if (info->channels > AV_NUM_DATA_POINTERS) {
+        frame.extended_data = g_new (uint8_t *, info->channels);
+      } else {
+        frame.extended_data = frame.data;
+      }
+
+      frame.extended_data[0] = g_malloc (in_size);
+      frame.linesize[0] = in_size / channels;
+      for (i = 1; i < channels; i++)
+        frame.extended_data[i] = frame.extended_data[i - 1] + frame.linesize[0];
+
+      switch (info->finfo->width) {
+        case 8:{
+          const guint8 *idata = (const guint8 *) audio_in;
+
+          for (i = 0; i < nsamples; i++) {
+            for (j = 0; j < channels; j++) {
+              ((guint8 *) frame.extended_data[j])[i] = idata[j];
+            }
+            idata += channels;
+          }
+          break;
+        }
+        case 16:{
+          const guint16 *idata = (const guint16 *) audio_in;
+
+          for (i = 0; i < nsamples; i++) {
+            for (j = 0; j < channels; j++) {
+              ((guint16 *) frame.extended_data[j])[i] = idata[j];
+            }
+            idata += channels;
+          }
+          break;
+        }
+        case 32:{
+          const guint32 *idata = (const guint32 *) audio_in;
+
+          for (i = 0; i < nsamples; i++) {
+            for (j = 0; j < channels; j++) {
+              ((guint32 *) frame.extended_data[j])[i] = idata[j];
+            }
+            idata += channels;
+          }
+
+          break;
+        }
+        case 64:{
+          const guint64 *idata = (const guint64 *) audio_in;
+
+          for (i = 0; i < nsamples; i++) {
+            for (j = 0; j < channels; j++) {
+              ((guint64 *) frame.extended_data[j])[i] = idata[j];
+            }
+            idata += channels;
+          }
+
+          break;
+        }
+        default:
+          g_assert_not_reached ();
+          break;
+      }
+
     } else {
+      frame.data[0] = audio_in;
       frame.extended_data = frame.data;
+      frame.linesize[0] = in_size;
+      frame.nb_samples = in_size / info->bpf;
     }
 
-    frame.extended_data[0] = g_malloc (in_size);
-    frame.linesize[0] = in_size / channels;
-    for (i = 1; i < channels; i++)
-      frame.extended_data[i] = frame.extended_data[i - 1] + frame.linesize[0];
+    /* we have a frame to feed the encoder */
+    res = avcodec_encode_audio2 (ctx, &pkt, &frame, have_data);
 
-    switch (info->finfo->width) {
-      case 8:{
-        const guint8 *idata = (const guint8 *) audio_in;
-
-        for (i = 0; i < nsamples; i++) {
-          for (j = 0; j < channels; j++) {
-            ((guint8 *) frame.extended_data[j])[i] = idata[j];
-          }
-          idata += channels;
-        }
-        break;
-      }
-      case 16:{
-        const guint16 *idata = (const guint16 *) audio_in;
-
-        for (i = 0; i < nsamples; i++) {
-          for (j = 0; j < channels; j++) {
-            ((guint16 *) frame.extended_data[j])[i] = idata[j];
-          }
-          idata += channels;
-        }
-        break;
-      }
-      case 32:{
-        const guint32 *idata = (const guint32 *) audio_in;
-
-        for (i = 0; i < nsamples; i++) {
-          for (j = 0; j < channels; j++) {
-            ((guint32 *) frame.extended_data[j])[i] = idata[j];
-          }
-          idata += channels;
-        }
-
-        break;
-      }
-      case 64:{
-        const guint64 *idata = (const guint64 *) audio_in;
-
-        for (i = 0; i < nsamples; i++) {
-          for (j = 0; j < channels; j++) {
-            ((guint64 *) frame.extended_data[j])[i] = idata[j];
-          }
-          idata += channels;
-        }
-
-        break;
-      }
-      default:
-        g_assert_not_reached ();
-        break;
-    }
+    if (planar && info->channels > 1)
+      g_free (frame.data[0]);
+    if (frame.extended_data != frame.data)
+      g_free (frame.extended_data);
 
   } else {
-    frame.data[0] = audio_in;
-    frame.extended_data = frame.data;
-    frame.linesize[0] = in_size;
-    frame.nb_samples = in_size / info->bpf;
+    /* flushing the encoder */
+    res = avcodec_encode_audio2 (ctx, &pkt, NULL, have_data);
   }
-
-  res = avcodec_encode_audio2 (ctx, &pkt, &frame, have_data);
-  if (planar && info->channels > 1)
-    g_free (frame.data[0]);
-  if (frame.extended_data != frame.data)
-    g_free (frame.extended_data);
 
   if (res < 0) {
     char error_str[128] = { 0, };
@@ -641,6 +669,9 @@ gst_ffmpegaudenc_set_property (GObject * object,
     case PROP_RTP_PAYLOAD_SIZE:
       ffmpegaudenc->rtp_payload_size = g_value_get_int (value);
       break;
+    case PROP_COMPLIANCE:
+      ffmpegaudenc->compliance = g_value_get_enum (value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -664,6 +695,9 @@ gst_ffmpegaudenc_get_property (GObject * object,
       break;
     case PROP_RTP_PAYLOAD_SIZE:
       g_value_set_int (value, ffmpegaudenc->rtp_payload_size);
+      break;
+    case PROP_COMPLIANCE:
+      g_value_set_enum (value, ffmpegaudenc->compliance);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
