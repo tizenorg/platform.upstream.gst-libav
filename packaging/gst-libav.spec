@@ -1,6 +1,6 @@
 Name:       gst-libav
 Summary:    Libav plugin for GStreamer
-Version:    1.2.4
+Version:    1.4.1
 Release:    1
 Group:      Multimedia/Libraries
 License:    GPL-2.0
