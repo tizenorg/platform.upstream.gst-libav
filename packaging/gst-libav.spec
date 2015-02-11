@@ -1,8 +1,8 @@
 Name:       gst-libav
 Summary:    Libav plugin for GStreamer
 Version:    1.4.1
-Release:    2
-Group:      Multimedia/Libraries
+Release:    3
+Group:      Multimedia/Framework
 License:    GPL-2.0
 Source0:    %{name}-%{version}.tar.gz
 Source100:  common.tar.bz2
@@ -54,3 +54,4 @@ rm -rf %{buildroot}
 %files
 %defattr(-,root,root,-)
 %{_libdir}/gstreamer-1.0/libgstlibav.so
+
