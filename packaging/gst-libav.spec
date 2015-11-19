@@ -4,7 +4,8 @@ Version:    1.6.1
 Release:    1
 Group:      Multimedia/Framework
 License:    LGPL-2.1+
-Source:    %{name}-%{version}.tar.gz
+Source:     %{name}-%{version}.tar.gz
+Source100:  common.tar.gz
 URL:        http://cgit.freedesktop.org/gstreamer/gst-libav
 BuildRequires:  gettext
 BuildRequires:  which
@@ -27,6 +28,7 @@ demuxing 30+ formats and colorspace conversion.
 
 %prep
 %setup -q -n gst-libav-%{version}
+%setup -q -T -D -a 100
 
 %build
 NOCONFIGURE=1 ./autogen.sh
