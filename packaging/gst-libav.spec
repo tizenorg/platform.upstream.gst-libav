@@ -1,12 +1,12 @@
 Name:       gst-libav
 Summary:    Libav plugin for GStreamer
-Version:    1.4.1
-Release:    4
+Version:    1.6.1
+Release:    1
 Group:      Multimedia/Framework
 License:    LGPL-2.1+
-Source0:    %{name}-%{version}.tar.gz
-Source100:  common.tar.bz2
-Source101:  libav.tar.bz2
+Source:     %{name}-%{version}.tar.gz
+Source100:  common.tar.gz
+Source101:  libav.tar.gz
 URL:        http://cgit.freedesktop.org/gstreamer/gst-libav
 BuildRequires:  gettext
 BuildRequires:  which
@@ -28,7 +28,7 @@ demuxing 30+ formats and colorspace conversion.
 
 
 %prep
-%setup -q
+%setup -q -n gst-libav-%{version}
 %setup -q -T -D -a 100
 %setup -q -T -D -a 101
 
@@ -54,4 +54,5 @@ rm -rf %{buildroot}
 %files
 %defattr(-,root,root,-)
 %{_libdir}/gstreamer-1.0/libgstlibav.so
+
 
