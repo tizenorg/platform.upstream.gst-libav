@@ -754,9 +754,9 @@ gst_ffmpegmux_collected (GstCollectPads * pads, gpointer user_data)
 
       gst_buffer_map (buf, &map, GST_MAP_READ);
       gst_ffmpeg_avpicture_fill (&src, map.data,
-          PIX_FMT_RGB24, st->codec->width, st->codec->height);
+          AV_PIX_FMT_RGB24, st->codec->width, st->codec->height);
 
-      av_picture_copy (&dst, &src, PIX_FMT_RGB24,
+      av_picture_copy (&dst, &src, AV_PIX_FMT_RGB24,
           st->codec->width, st->codec->height);
       gst_buffer_unmap (buf, &map);
     } else {
@@ -935,7 +935,14 @@ gst_ffmpegmux_register (GstPlugin * plugin)
         (!strncmp (in_plugin->name, "ass", 3)) ||
         (!strncmp (in_plugin->name, "ffmetadata", 10)) ||
         (!strncmp (in_plugin->name, "srt", 3)) ||
-        !strcmp (in_plugin->name, "segment")
+        !strcmp (in_plugin->name, "segment") ||
+        !strcmp (in_plugin->name, "stream_segment,ssegment") ||
+        !strcmp (in_plugin->name, "jacosub") ||
+        !strcmp (in_plugin->name, "webvtt") ||
+        !strcmp (in_plugin->name, "lrc") ||
+        !strcmp (in_plugin->name, "microdvd") ||
+        !strcmp (in_plugin->name, "tee") ||
+        !strncmp (in_plugin->name, "webm", 4)
         ) {
       GST_LOG ("Ignoring muxer %s", in_plugin->name);
       goto next;

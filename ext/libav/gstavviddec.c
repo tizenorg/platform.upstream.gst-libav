@@ -48,6 +48,8 @@ GST_DEBUG_CATEGORY_EXTERN (GST_CAT_PERFORMANCE);
 #define DEFAULT_MAX_THREADS		0
 #define DEFAULT_OUTPUT_CORRUPT		TRUE
 #define REQUIRED_POOL_MAX_BUFFERS       32
+#define DEFAULT_STRIDE_ALIGN            31
+#define DEFAULT_ALLOC_PARAM             { 0, DEFAULT_STRIDE_ALIGN, 0, 0, }
 
 enum
 {
@@ -85,18 +87,19 @@ static void gst_ffmpegviddec_get_property (GObject * object,
     guint prop_id, GValue * value, GParamSpec * pspec);
 
 static gboolean gst_ffmpegviddec_negotiate (GstFFMpegVidDec * ffmpegdec,
-    AVCodecContext * context, gboolean force);
+    AVCodecContext * context, AVFrame * picture);
 
 /* some sort of bufferpool handling, but different */
-static int gst_ffmpegviddec_get_buffer (AVCodecContext * context,
-    AVFrame * picture);
-static int gst_ffmpegviddec_reget_buffer (AVCodecContext * context,
-    AVFrame * picture);
-static void gst_ffmpegviddec_release_buffer (AVCodecContext * context,
-    AVFrame * picture);
+static int gst_ffmpegviddec_get_buffer2 (AVCodecContext * context,
+    AVFrame * picture, int flags);
 
 static GstFlowReturn gst_ffmpegviddec_finish (GstVideoDecoder * decoder);
 static void gst_ffmpegviddec_drain (GstFFMpegVidDec * ffmpegdec);
+
+static gboolean picture_changed (GstFFMpegVidDec * ffmpegdec,
+    AVFrame * picture);
+static gboolean context_changed (GstFFMpegVidDec * ffmpegdec,
+    AVCodecContext * context);
 
 #define GST_FFDEC_PARAMS_QDATA g_quark_from_static_string("avdec-params")
 
@@ -246,6 +249,7 @@ gst_ffmpegviddec_class_init (GstFFMpegVidDecClass * klass)
   viddec_class->stop = gst_ffmpegviddec_stop;
   viddec_class->flush = gst_ffmpegviddec_flush;
   viddec_class->finish = gst_ffmpegviddec_finish;
+  viddec_class->drain = gst_ffmpegviddec_finish;        /* drain and finish are the same to us */
   viddec_class->decide_allocation = gst_ffmpegviddec_decide_allocation;
   viddec_class->propose_allocation = gst_ffmpegviddec_propose_allocation;
 }
@@ -259,13 +263,17 @@ gst_ffmpegviddec_init (GstFFMpegVidDec * ffmpegdec)
   /* some ffmpeg data */
   ffmpegdec->context = avcodec_alloc_context3 (klass->in_plugin);
   ffmpegdec->context->opaque = ffmpegdec;
-  ffmpegdec->picture = avcodec_alloc_frame ();
+  ffmpegdec->picture = av_frame_alloc ();
   ffmpegdec->opened = FALSE;
   ffmpegdec->skip_frame = ffmpegdec->lowres = 0;
   ffmpegdec->direct_rendering = DEFAULT_DIRECT_RENDERING;
   ffmpegdec->debug_mv = DEFAULT_DEBUG_MV;
   ffmpegdec->max_threads = DEFAULT_MAX_THREADS;
   ffmpegdec->output_corrupt = DEFAULT_OUTPUT_CORRUPT;
+
+  GST_PAD_SET_ACCEPT_TEMPLATE (GST_VIDEO_DECODER_SINK_PAD (ffmpegdec));
+  gst_video_decoder_set_use_default_pad_acceptcaps (GST_VIDEO_DECODER_CAST
+      (ffmpegdec), TRUE);
 
   gst_video_decoder_set_needs_format (GST_VIDEO_DECODER (ffmpegdec), TRUE);
 }
@@ -275,13 +283,13 @@ gst_ffmpegviddec_finalize (GObject * object)
 {
   GstFFMpegVidDec *ffmpegdec = (GstFFMpegVidDec *) object;
 
+  av_frame_free (&ffmpegdec->picture);
+
   if (ffmpegdec->context != NULL) {
     gst_ffmpeg_avcodec_close (ffmpegdec->context);
     av_free (ffmpegdec->context);
     ffmpegdec->context = NULL;
   }
-
-  avcodec_free_frame (&ffmpegdec->picture);
 
   G_OBJECT_CLASS (parent_class)->finalize (object);
 }
@@ -323,7 +331,10 @@ gst_ffmpegviddec_close (GstFFMpegVidDec * ffmpegdec, gboolean reset)
     av_free (ffmpegdec->context->extradata);
     ffmpegdec->context->extradata = NULL;
   }
-
+  if (ffmpegdec->context->slice_offset) {
+    g_free (ffmpegdec->context->slice_offset);
+    ffmpegdec->context->slice_offset = NULL;
+  }
   if (reset) {
     if (avcodec_get_context_defaults3 (ffmpegdec->context,
             oclass->in_plugin) < 0) {
@@ -436,14 +447,23 @@ gst_ffmpegviddec_set_format (GstVideoDecoder * decoder,
       GST_OBJECT_UNLOCK (ffmpegdec);
       return FALSE;
     }
+    ffmpegdec->pic_pix_fmt = 0;
+    ffmpegdec->pic_width = 0;
+    ffmpegdec->pic_height = 0;
+    ffmpegdec->pic_par_n = 0;
+    ffmpegdec->pic_par_d = 0;
+    ffmpegdec->ctx_ticks = 0;
+    ffmpegdec->ctx_time_n = 0;
+    ffmpegdec->ctx_time_d = 0;
   }
 
   gst_caps_replace (&ffmpegdec->last_caps, state->caps);
 
   /* set buffer functions */
-  ffmpegdec->context->get_buffer = gst_ffmpegviddec_get_buffer;
-  ffmpegdec->context->reget_buffer = gst_ffmpegviddec_reget_buffer;
-  ffmpegdec->context->release_buffer = gst_ffmpegviddec_release_buffer;
+  ffmpegdec->context->get_buffer2 = gst_ffmpegviddec_get_buffer2;
+  ffmpegdec->context->get_buffer = NULL;
+  ffmpegdec->context->reget_buffer = NULL;
+  ffmpegdec->context->release_buffer = NULL;
   ffmpegdec->context->draw_horiz_band = NULL;
 
   /* reset coded_width/_height to prevent it being reused from last time when
@@ -552,6 +572,7 @@ typedef struct
   gboolean mapped;
   GstVideoFrame vframe;
   GstBuffer *buffer;
+  AVBufferRef *avbuffer;
 } GstFFMpegVidDecVideoFrame;
 
 static GstFFMpegVidDecVideoFrame *
@@ -579,6 +600,9 @@ gst_ffmpegviddec_video_frame_free (GstFFMpegVidDec * ffmpegdec,
     gst_video_frame_unmap (&frame->vframe);
   gst_video_decoder_release_frame (GST_VIDEO_DECODER (ffmpegdec), frame->frame);
   gst_buffer_replace (&frame->buffer, NULL);
+  if (frame->avbuffer) {
+    av_buffer_unref (&frame->avbuffer);
+  }
   g_slice_free (GstFFMpegVidDecVideoFrame, frame);
 }
 
@@ -590,16 +614,150 @@ dummy_free_buffer (void *opaque, uint8_t * data)
   gst_ffmpegviddec_video_frame_free (frame->ffmpegdec, frame);
 }
 
+/* This function prepares the pool configuration for direct rendering. To use
+ * this method, the codec should support direct rendering and the pool should
+ * support video meta and video alignment */
+static void
+gst_ffmpegvideodec_prepare_dr_pool (GstFFMpegVidDec * ffmpegdec,
+    GstBufferPool * pool, GstVideoInfo * info, GstStructure * config)
+{
+  GstAllocationParams params;
+  GstVideoAlignment align;
+  GstAllocator *allocator = NULL;
+  gint width, height;
+  gint linesize_align[4];
+  gint i;
+  guint edge;
+  gsize max_align;
+
+  width = GST_VIDEO_INFO_WIDTH (info);
+  height = GST_VIDEO_INFO_HEIGHT (info);
+
+  /* let ffmpeg find the alignment and padding */
+  avcodec_align_dimensions2 (ffmpegdec->context, &width, &height,
+      linesize_align);
+
+  if (ffmpegdec->context->flags & CODEC_FLAG_EMU_EDGE)
+    edge = 0;
+  else
+    edge = avcodec_get_edge_width ();
+
+  /* increase the size for the padding */
+  width += edge << 1;
+  height += edge << 1;
+
+  align.padding_top = edge;
+  align.padding_left = edge;
+  align.padding_right = width - GST_VIDEO_INFO_WIDTH (info) - edge;
+  align.padding_bottom = height - GST_VIDEO_INFO_HEIGHT (info) - edge;
+
+  /* add extra padding to match libav buffer allocation sizes */
+  align.padding_bottom++;
+
+  gst_buffer_pool_config_get_allocator (config, &allocator, &params);
+
+  max_align = DEFAULT_STRIDE_ALIGN;
+  max_align |= params.align;
+
+  for (i = 0; i < GST_VIDEO_MAX_PLANES; i++) {
+    if (linesize_align[i] > 0)
+      max_align |= linesize_align[i] - 1;
+  }
+
+  for (i = 0; i < GST_VIDEO_MAX_PLANES; i++)
+    align.stride_align[i] = max_align;
+
+  params.align = max_align;
+
+  gst_buffer_pool_config_set_allocator (config, allocator, &params);
+
+  GST_DEBUG_OBJECT (ffmpegdec, "aligned dimension %dx%d -> %dx%d "
+      "padding t:%u l:%u r:%u b:%u, stride_align %d:%d:%d:%d",
+      GST_VIDEO_INFO_WIDTH (info),
+      GST_VIDEO_INFO_HEIGHT (info), width, height, align.padding_top,
+      align.padding_left, align.padding_right, align.padding_bottom,
+      align.stride_align[0], align.stride_align[1], align.stride_align[2],
+      align.stride_align[3]);
+
+  gst_buffer_pool_config_add_option (config,
+      GST_BUFFER_POOL_OPTION_VIDEO_ALIGNMENT);
+  gst_buffer_pool_config_set_video_alignment (config, &align);
+}
+
+static void
+gst_ffmpegviddec_ensure_internal_pool (GstFFMpegVidDec * ffmpegdec,
+    AVFrame * picture)
+{
+  GstAllocationParams params = DEFAULT_ALLOC_PARAM;
+  GstVideoInfo info;
+  GstVideoFormat format;
+  GstCaps *caps;
+  GstStructure *config;
+  gint i;
+
+  if (ffmpegdec->internal_pool != NULL &&
+      ffmpegdec->pool_width == picture->width &&
+      ffmpegdec->pool_height == picture->height &&
+      ffmpegdec->pool_format == picture->format)
+    return;
+
+  GST_DEBUG_OBJECT (ffmpegdec, "Updating internal pool (%i, %i)",
+      picture->width, picture->height);
+
+  format = gst_ffmpeg_pixfmt_to_videoformat (picture->format);
+  gst_video_info_set_format (&info, format, picture->width, picture->height);
+
+  for (i = 0; i < G_N_ELEMENTS (ffmpegdec->stride); i++)
+    ffmpegdec->stride[i] = -1;
+
+  if (ffmpegdec->internal_pool)
+    gst_object_unref (ffmpegdec->internal_pool);
+
+  ffmpegdec->internal_pool = gst_video_buffer_pool_new ();
+  config = gst_buffer_pool_get_config (ffmpegdec->internal_pool);
+
+  caps = gst_video_info_to_caps (&info);
+  gst_buffer_pool_config_set_params (config, caps, info.size, 2, 0);
+  gst_buffer_pool_config_set_allocator (config, NULL, &params);
+  gst_buffer_pool_config_add_option (config, GST_BUFFER_POOL_OPTION_VIDEO_META);
+
+  gst_ffmpegvideodec_prepare_dr_pool (ffmpegdec,
+      ffmpegdec->internal_pool, &info, config);
+  /* generic video pool never fails */
+  gst_buffer_pool_set_config (ffmpegdec->internal_pool, config);
+  gst_caps_unref (caps);
+
+  gst_buffer_pool_set_active (ffmpegdec->internal_pool, TRUE);
+
+  /* Remember pool size so we can detect changes */
+  ffmpegdec->pool_width = picture->width;
+  ffmpegdec->pool_height = picture->height;
+  ffmpegdec->pool_format = picture->format;
+  ffmpegdec->pool_info = info;
+}
+
+static gboolean
+gst_ffmpegviddec_can_direct_render (GstFFMpegVidDec * ffmpegdec)
+{
+  GstFFMpegVidDecClass *oclass;
+
+  if (!ffmpegdec->direct_rendering)
+    return FALSE;
+
+  oclass = (GstFFMpegVidDecClass *) (G_OBJECT_GET_CLASS (ffmpegdec));
+  return ((oclass->in_plugin->capabilities & CODEC_CAP_DR1) == CODEC_CAP_DR1);
+}
+
 /* called when ffmpeg wants us to allocate a buffer to write the decoded frame
  * into. We try to give it memory from our pool */
 static int
-gst_ffmpegviddec_get_buffer (AVCodecContext * context, AVFrame * picture)
+gst_ffmpegviddec_get_buffer2 (AVCodecContext * context, AVFrame * picture,
+    int flags)
 {
   GstVideoCodecFrame *frame;
   GstFFMpegVidDecVideoFrame *dframe;
   GstFFMpegVidDec *ffmpegdec;
   gint c;
-  GstVideoInfo *info;
   GstFlowReturn ret;
 
   ffmpegdec = (GstFFMpegVidDec *) context->opaque;
@@ -609,7 +767,6 @@ gst_ffmpegviddec_get_buffer (AVCodecContext * context, AVFrame * picture)
   /* apply the last info we have seen to this picture, when we get the
    * picture back from ffmpeg we can use this to correctly timestamp the output
    * buffer */
-  picture->reordered_opaque = context->reordered_opaque;
   GST_DEBUG_OBJECT (ffmpegdec, "opaque value SN %d",
       (gint32) picture->reordered_opaque);
 
@@ -628,23 +785,23 @@ gst_ffmpegviddec_get_buffer (AVCodecContext * context, AVFrame * picture)
     goto duplicate_frame;
 
   /* GstFFMpegVidDecVideoFrame receives the frame ref */
-  picture->opaque = dframe =
-      gst_ffmpegviddec_video_frame_new (ffmpegdec, frame);
+  if (picture->opaque) {
+    dframe = picture->opaque;
+    dframe->frame = frame;
+  } else {
+    picture->opaque = dframe =
+        gst_ffmpegviddec_video_frame_new (ffmpegdec, frame);
+  }
 
   GST_DEBUG_OBJECT (ffmpegdec, "storing opaque %p", dframe);
 
-  ffmpegdec->context->pix_fmt = context->pix_fmt;
-
-  /* see if we need renegotiation */
-  if (G_UNLIKELY (!gst_ffmpegviddec_negotiate (ffmpegdec, context, FALSE)))
-    goto negotiate_failed;
-
-  if (!ffmpegdec->current_dr)
+  if (!gst_ffmpegviddec_can_direct_render (ffmpegdec))
     goto no_dr;
 
-  ret =
-      gst_video_decoder_allocate_output_frame (GST_VIDEO_DECODER (ffmpegdec),
-      frame);
+  gst_ffmpegviddec_ensure_internal_pool (ffmpegdec, picture);
+
+  ret = gst_buffer_pool_acquire_buffer (ffmpegdec->internal_pool,
+      &frame->output_buffer, NULL);
   if (ret != GST_FLOW_OK)
     goto alloc_failed;
 
@@ -656,40 +813,25 @@ gst_ffmpegviddec_get_buffer (AVCodecContext * context, AVFrame * picture)
   gst_buffer_replace (&frame->output_buffer, NULL);
 
   /* Fill avpicture */
-  info = &ffmpegdec->output_state->info;
-  if (!gst_video_frame_map (&dframe->vframe, info, dframe->buffer,
-          GST_MAP_READWRITE))
+  if (!gst_video_frame_map (&dframe->vframe, &ffmpegdec->pool_info,
+          dframe->buffer, GST_MAP_READWRITE))
     goto invalid_frame;
   dframe->mapped = TRUE;
 
   for (c = 0; c < AV_NUM_DATA_POINTERS; c++) {
-    if (c < GST_VIDEO_INFO_N_PLANES (info)) {
+    if (c < GST_VIDEO_INFO_N_PLANES (&ffmpegdec->pool_info)) {
       picture->data[c] = GST_VIDEO_FRAME_PLANE_DATA (&dframe->vframe, c);
       picture->linesize[c] = GST_VIDEO_FRAME_PLANE_STRIDE (&dframe->vframe, c);
 
-      /* libav does not allow stride changes currently, fall back to
-       * non-direct rendering here:
+      if (ffmpegdec->stride[c] == -1)
+        ffmpegdec->stride[c] = picture->linesize[c];
+
+      /* libav does not allow stride changes, decide allocation should check
+       * before replacing the internal pool with a downstream pool.
        * https://bugzilla.gnome.org/show_bug.cgi?id=704769
        * https://bugzilla.libav.org/show_bug.cgi?id=556
        */
-      if (ffmpegdec->stride[c] == -1) {
-        ffmpegdec->stride[c] = picture->linesize[c];
-      } else if (picture->linesize[c] != ffmpegdec->stride[c]) {
-        GST_LOG_OBJECT (ffmpegdec,
-            "No direct rendering, stride changed c=%d %d->%d", c,
-            ffmpegdec->stride[c], picture->linesize[c]);
-
-        for (c = 0; c < AV_NUM_DATA_POINTERS; c++) {
-          picture->data[c] = NULL;
-          picture->linesize[c] = 0;
-        }
-        gst_video_frame_unmap (&dframe->vframe);
-        dframe->mapped = FALSE;
-        gst_buffer_replace (&dframe->buffer, NULL);
-        ffmpegdec->current_dr = FALSE;
-
-        goto no_dr;
-      }
+      g_assert (picture->linesize[c] == ffmpegdec->stride[c]);
     } else {
       picture->data[c] = NULL;
       picture->linesize[c] = 0;
@@ -698,7 +840,9 @@ gst_ffmpegviddec_get_buffer (AVCodecContext * context, AVFrame * picture)
         picture->data[c]);
   }
 
-  /* tell ffmpeg we own this buffer, tranfer the ref we have on the buffer to
+  picture->buf[0] = av_buffer_create (NULL, 0, dummy_free_buffer, dframe, 0);
+
+  /* tell ffmpeg we own this buffer, transfer the ref we have on the buffer to
    * the opaque data. */
   picture->type = FF_BUFFER_TYPE_USER;
 
@@ -707,11 +851,6 @@ gst_ffmpegviddec_get_buffer (AVCodecContext * context, AVFrame * picture)
   return 0;
 
   /* fallbacks */
-negotiate_failed:
-  {
-    GST_DEBUG_OBJECT (ffmpegdec, "negotiate failed");
-    goto fallback;
-  }
 no_dr:
   {
     GST_LOG_OBJECT (ffmpegdec, "direct rendering disabled, fallback alloc");
@@ -733,17 +872,23 @@ invalid_frame:
 fallback:
   {
     int c;
-    gboolean first = TRUE;
-    int ret = avcodec_default_get_buffer (context, picture);
+    int ret = avcodec_default_get_buffer2 (context, picture, flags);
 
     for (c = 0; c < AV_NUM_DATA_POINTERS; c++) {
       ffmpegdec->stride[c] = picture->linesize[c];
-
-      if (picture->buf[c] == NULL && first) {
-        picture->buf[c] =
-            av_buffer_create (NULL, 0, dummy_free_buffer, dframe, 0);
-        first = FALSE;
-      }
+    }
+    /* Wrap our buffer around the default one to be able to have a callback
+     * when our data can be freed. Just putting our data into the first free
+     * buffer might not work if there are too many allocated already
+     */
+    if (picture->buf[0]) {
+      dframe->avbuffer = picture->buf[0];
+      picture->buf[0] =
+          av_buffer_create (picture->buf[0]->data, picture->buf[0]->size,
+          dummy_free_buffer, dframe, 0);
+    } else {
+      picture->buf[0] =
+          av_buffer_create (NULL, 0, dummy_free_buffer, dframe, 0);
     }
 
     return ret;
@@ -761,121 +906,53 @@ no_frame:
   }
 }
 
-/* this should havesame effect as _get_buffer wrt opaque metadata,
- * but preserving current content, if any */
-static int
-gst_ffmpegviddec_reget_buffer (AVCodecContext * context, AVFrame * picture)
+static gboolean
+picture_changed (GstFFMpegVidDec * ffmpegdec, AVFrame * picture)
 {
-  GstVideoCodecFrame *frame;
-  GstFFMpegVidDecVideoFrame *dframe;
-  GstFFMpegVidDec *ffmpegdec;
-
-  ffmpegdec = (GstFFMpegVidDec *) context->opaque;
-
-  GST_DEBUG_OBJECT (ffmpegdec, "regetting buffer picture %p", picture);
-
-  picture->reordered_opaque = context->reordered_opaque;
-
-  /* if there is no opaque, we didn't yet attach any frame to it. What usually
-   * happens is that avcodec_default_reget_buffer will call the getbuffer
-   * function. */
-  dframe = picture->opaque;
-  if (dframe == NULL)
-    goto done;
-
-  frame =
-      gst_video_decoder_get_frame (GST_VIDEO_DECODER (ffmpegdec),
-      picture->reordered_opaque);
-  if (G_UNLIKELY (frame == NULL))
-    goto no_frame;
-
-  if (G_UNLIKELY (frame->output_buffer != NULL))
-    goto duplicate_frame;
-
-  /* replace the frame, this one contains the pts/dts for the correspoding input
-   * buffer, which we need after decoding. */
-  gst_video_codec_frame_unref (dframe->frame);
-  dframe->frame = frame;
-
-done:
-  return avcodec_default_reget_buffer (context, picture);
-
-  /* ERRORS */
-no_frame:
-  {
-    GST_WARNING_OBJECT (ffmpegdec, "Couldn't get codec frame !");
-    return -1;
-  }
-duplicate_frame:
-  {
-    GST_WARNING_OBJECT (ffmpegdec, "already alloc'ed output buffer for frame");
-    return -1;
-  }
+  return !(ffmpegdec->pic_width == picture->width
+      && ffmpegdec->pic_height == picture->height
+      && ffmpegdec->pic_pix_fmt == picture->format
+      && ffmpegdec->pic_par_n == picture->sample_aspect_ratio.num
+      && ffmpegdec->pic_par_d == picture->sample_aspect_ratio.den
+      && ffmpegdec->pic_interlaced == picture->interlaced_frame);
 }
 
-/* called when ffmpeg is done with our buffer */
-static void
-gst_ffmpegviddec_release_buffer (AVCodecContext * context, AVFrame * picture)
+static gboolean
+context_changed (GstFFMpegVidDec * ffmpegdec, AVCodecContext * context)
 {
-  gint i;
-  GstFFMpegVidDecVideoFrame *frame;
-  GstFFMpegVidDec *ffmpegdec;
-
-  ffmpegdec = (GstFFMpegVidDec *) context->opaque;
-  frame = (GstFFMpegVidDecVideoFrame *) picture->opaque;
-  GST_DEBUG_OBJECT (ffmpegdec, "release frame SN %d",
-      frame->frame->system_frame_number);
-
-  /* check if it was our buffer */
-  if (picture->type != FF_BUFFER_TYPE_USER) {
-    GST_DEBUG_OBJECT (ffmpegdec, "default release buffer");
-    avcodec_default_release_buffer (context, picture);
-  }
-
-  /* we remove the opaque data now */
-  picture->opaque = NULL;
-
-  gst_ffmpegviddec_video_frame_free (ffmpegdec, frame);
-
-  /* zero out the reference in ffmpeg */
-  for (i = 0; i < 4; i++) {
-    picture->data[i] = NULL;
-    picture->linesize[i] = 0;
-  }
+  return !(ffmpegdec->ctx_ticks == context->ticks_per_frame
+      && ffmpegdec->ctx_time_n == context->time_base.num
+      && ffmpegdec->ctx_time_d == context->time_base.den);
 }
 
 static gboolean
 update_video_context (GstFFMpegVidDec * ffmpegdec, AVCodecContext * context,
-    gboolean force)
+    AVFrame * picture)
 {
-  if (!force && ffmpegdec->ctx_width == context->width
-      && ffmpegdec->ctx_height == context->height
-      && ffmpegdec->ctx_ticks == context->ticks_per_frame
-      && ffmpegdec->ctx_time_n == context->time_base.num
-      && ffmpegdec->ctx_time_d == context->time_base.den
-      && ffmpegdec->ctx_pix_fmt == context->pix_fmt
-      && ffmpegdec->ctx_par_n == context->sample_aspect_ratio.num
-      && ffmpegdec->ctx_par_d == context->sample_aspect_ratio.den)
+  if (!picture_changed (ffmpegdec, picture)
+      && !context_changed (ffmpegdec, context))
     return FALSE;
 
   GST_DEBUG_OBJECT (ffmpegdec,
-      "Renegotiating video from %dx%d@ %d:%d PAR %d/%d fps to %dx%d@ %d:%d PAR %d/%d fps pixfmt %d",
-      ffmpegdec->ctx_width, ffmpegdec->ctx_height,
-      ffmpegdec->ctx_par_n, ffmpegdec->ctx_par_d,
+      "Renegotiating video from %dx%d@ %d:%d PAR %d/%d fps pixfmt %d to %dx%d@ %d:%d PAR %d/%d fps pixfmt %d",
+      ffmpegdec->pic_width, ffmpegdec->pic_height,
+      ffmpegdec->pic_par_n, ffmpegdec->pic_par_d,
       ffmpegdec->ctx_time_n, ffmpegdec->ctx_time_d,
-      context->width, context->height,
-      context->sample_aspect_ratio.num,
-      context->sample_aspect_ratio.den,
-      context->time_base.num, context->time_base.den, context->pix_fmt);
+      ffmpegdec->pic_pix_fmt,
+      picture->width, picture->height,
+      picture->sample_aspect_ratio.num,
+      picture->sample_aspect_ratio.den,
+      context->time_base.num, context->time_base.den, picture->format);
 
-  ffmpegdec->ctx_width = context->width;
-  ffmpegdec->ctx_height = context->height;
+  ffmpegdec->pic_pix_fmt = picture->format;
+  ffmpegdec->pic_width = picture->width;
+  ffmpegdec->pic_height = picture->height;
+  ffmpegdec->pic_par_n = picture->sample_aspect_ratio.num;
+  ffmpegdec->pic_par_d = picture->sample_aspect_ratio.den;
+  ffmpegdec->pic_interlaced = picture->interlaced_frame;
   ffmpegdec->ctx_ticks = context->ticks_per_frame;
   ffmpegdec->ctx_time_n = context->time_base.num;
   ffmpegdec->ctx_time_d = context->time_base.den;
-  ffmpegdec->ctx_pix_fmt = context->pix_fmt;
-  ffmpegdec->ctx_par_n = context->sample_aspect_ratio.num;
-  ffmpegdec->ctx_par_d = context->sample_aspect_ratio.den;
 
   return TRUE;
 }
@@ -897,9 +974,9 @@ gst_ffmpegviddec_update_par (GstFFMpegVidDec * ffmpegdec,
         demuxer_denom);
   }
 
-  if (ffmpegdec->ctx_par_n && ffmpegdec->ctx_par_d) {
-    decoder_num = ffmpegdec->ctx_par_n;
-    decoder_denom = ffmpegdec->ctx_par_d;
+  if (ffmpegdec->pic_par_n && ffmpegdec->pic_par_d) {
+    decoder_num = ffmpegdec->pic_par_n;
+    decoder_denom = ffmpegdec->pic_par_d;
     decoder_par_set = TRUE;
     GST_DEBUG_OBJECT (ffmpegdec, "Decoder PAR: %d:%d", decoder_num,
         decoder_denom);
@@ -956,23 +1033,23 @@ no_par:
 
 static gboolean
 gst_ffmpegviddec_negotiate (GstFFMpegVidDec * ffmpegdec,
-    AVCodecContext * context, gboolean force)
+    AVCodecContext * context, AVFrame * picture)
 {
   GstVideoFormat fmt;
   GstVideoInfo *in_info, *out_info;
   GstVideoCodecState *output_state;
   gint fps_n, fps_d;
 
-  if (!update_video_context (ffmpegdec, context, force))
+  if (!update_video_context (ffmpegdec, context, picture))
     return TRUE;
 
-  fmt = gst_ffmpeg_pixfmt_to_videoformat (ffmpegdec->ctx_pix_fmt);
+  fmt = gst_ffmpeg_pixfmt_to_videoformat (ffmpegdec->pic_pix_fmt);
   if (G_UNLIKELY (fmt == GST_VIDEO_FORMAT_UNKNOWN))
     goto unknown_format;
 
   output_state =
       gst_video_decoder_set_output_state (GST_VIDEO_DECODER (ffmpegdec), fmt,
-      ffmpegdec->ctx_width, ffmpegdec->ctx_height, ffmpegdec->input_state);
+      ffmpegdec->pic_width, ffmpegdec->pic_height, ffmpegdec->input_state);
   if (ffmpegdec->output_state)
     gst_video_codec_state_unref (ffmpegdec->output_state);
   ffmpegdec->output_state = output_state;
@@ -981,7 +1058,7 @@ gst_ffmpegviddec_negotiate (GstFFMpegVidDec * ffmpegdec,
   out_info = &ffmpegdec->output_state->info;
 
   /* set the interlaced flag */
-  if (ffmpegdec->ctx_interlaced)
+  if (ffmpegdec->pic_interlaced)
     out_info->interlace_mode = GST_VIDEO_INTERLACE_MODE_MIXED;
   else
     out_info->interlace_mode = GST_VIDEO_INTERLACE_MODE_PROGRESSIVE;
@@ -1025,12 +1102,21 @@ gst_ffmpegviddec_negotiate (GstFFMpegVidDec * ffmpegdec,
       fps_d = 1;
     }
   }
+
   GST_LOG_OBJECT (ffmpegdec, "setting framerate: %d/%d", fps_n, fps_d);
   out_info->fps_n = fps_n;
   out_info->fps_d = fps_d;
 
   /* calculate and update par now */
   gst_ffmpegviddec_update_par (ffmpegdec, in_info, out_info);
+
+  /* Copy stereo/multiview info from upstream if set */
+  if (GST_VIDEO_INFO_MULTIVIEW_MODE (in_info) != GST_VIDEO_MULTIVIEW_MODE_NONE) {
+    GST_VIDEO_INFO_MULTIVIEW_MODE (out_info) =
+        GST_VIDEO_INFO_MULTIVIEW_MODE (in_info);
+    GST_VIDEO_INFO_MULTIVIEW_FLAGS (out_info) =
+        GST_VIDEO_INFO_MULTIVIEW_FLAGS (in_info);
+  }
 
   if (!gst_video_decoder_negotiate (GST_VIDEO_DECODER (ffmpegdec)))
     goto negotiate_failed;
@@ -1047,14 +1133,14 @@ unknown_format:
 negotiate_failed:
   {
     /* Reset so we try again next time even if force==FALSE */
-    ffmpegdec->ctx_width = 0;
-    ffmpegdec->ctx_height = 0;
+    ffmpegdec->pic_pix_fmt = 0;
+    ffmpegdec->pic_width = 0;
+    ffmpegdec->pic_height = 0;
+    ffmpegdec->pic_par_n = 0;
+    ffmpegdec->pic_par_d = 0;
     ffmpegdec->ctx_ticks = 0;
     ffmpegdec->ctx_time_n = 0;
     ffmpegdec->ctx_time_d = 0;
-    ffmpegdec->ctx_pix_fmt = 0;
-    ffmpegdec->ctx_par_n = 0;
-    ffmpegdec->ctx_par_d = 0;
 
     GST_ERROR_OBJECT (ffmpegdec, "negotiation failed");
     return FALSE;
@@ -1072,11 +1158,21 @@ gst_ffmpegviddec_do_qos (GstFFMpegVidDec * ffmpegdec,
     GstVideoCodecFrame * frame, gboolean * mode_switch)
 {
   GstClockTimeDiff diff;
+  GstSegmentFlags skip_flags =
+      GST_VIDEO_DECODER_INPUT_SEGMENT (ffmpegdec).flags;
 
   *mode_switch = FALSE;
 
   if (frame == NULL)
     return;
+
+  if (skip_flags & GST_SEGMENT_FLAG_TRICKMODE_KEY_UNITS) {
+    ffmpegdec->context->skip_frame = AVDISCARD_NONKEY;
+    *mode_switch = TRUE;
+  } else if (skip_flags & GST_SEGMENT_FLAG_TRICKMODE) {
+    ffmpegdec->context->skip_frame = AVDISCARD_NONREF;
+    *mode_switch = TRUE;
+  }
 
   diff =
       gst_video_decoder_get_max_decode_time (GST_VIDEO_DECODER (ffmpegdec),
@@ -1088,17 +1184,19 @@ gst_ffmpegviddec_do_qos (GstFFMpegVidDec * ffmpegdec,
 
   GST_DEBUG_OBJECT (ffmpegdec, "decoding time %" G_GINT64_FORMAT, diff);
 
-  if (diff > 0 && ffmpegdec->context->skip_frame != AVDISCARD_DEFAULT) {
-    ffmpegdec->context->skip_frame = AVDISCARD_DEFAULT;
-    *mode_switch = TRUE;
-    GST_DEBUG_OBJECT (ffmpegdec, "QOS: normal mode");
-  }
+  if (*mode_switch == FALSE) {
+    if (diff > 0 && ffmpegdec->context->skip_frame != AVDISCARD_DEFAULT) {
+      ffmpegdec->context->skip_frame = AVDISCARD_DEFAULT;
+      *mode_switch = TRUE;
+      GST_DEBUG_OBJECT (ffmpegdec, "QOS: normal mode");
+    }
 
-  else if (diff <= 0 && ffmpegdec->context->skip_frame != AVDISCARD_NONREF) {
-    ffmpegdec->context->skip_frame = AVDISCARD_NONREF;
-    *mode_switch = TRUE;
-    GST_DEBUG_OBJECT (ffmpegdec,
-        "QOS: hurry up, diff %" G_GINT64_FORMAT " >= 0", diff);
+    else if (diff <= 0 && ffmpegdec->context->skip_frame != AVDISCARD_NONREF) {
+      ffmpegdec->context->skip_frame = AVDISCARD_NONREF;
+      *mode_switch = TRUE;
+      GST_DEBUG_OBJECT (ffmpegdec,
+          "QOS: hurry up, diff %" G_GINT64_FORMAT " >= 0", diff);
+    }
   }
 }
 
@@ -1113,6 +1211,9 @@ get_output_buffer (GstFFMpegVidDec * ffmpegdec, GstVideoCodecFrame * frame)
   gint c;
 
   GST_LOG_OBJECT (ffmpegdec, "get output buffer");
+
+  if (!ffmpegdec->output_state)
+    goto not_negotiated;
 
   ret =
       gst_video_decoder_allocate_output_frame (GST_VIDEO_DECODER (ffmpegdec),
@@ -1132,12 +1233,12 @@ get_output_buffer (GstFFMpegVidDec * ffmpegdec, GstVideoCodecFrame * frame)
     if (c < GST_VIDEO_INFO_N_PLANES (info)) {
       pic.data[c] = GST_VIDEO_FRAME_PLANE_DATA (&vframe, c);
       pic.linesize[c] = GST_VIDEO_FRAME_PLANE_STRIDE (&vframe, c);
+      GST_LOG_OBJECT (ffmpegdec, "[%i] linesize %d, data %p", c,
+          pic.linesize[c], pic.data[c]);
     } else {
       pic.data[c] = NULL;
       pic.linesize[c] = 0;
     }
-    GST_LOG_OBJECT (ffmpegdec, "linesize %d, data %p", pic.linesize[c],
-        pic.data[c]);
   }
 
   outpic = (AVPicture *) ffmpegdec->picture;
@@ -1154,8 +1255,13 @@ get_output_buffer (GstFFMpegVidDec * ffmpegdec, GstVideoCodecFrame * frame)
   /* special cases */
 alloc_failed:
   {
-    GST_DEBUG_OBJECT (ffmpegdec, "pad_alloc failed");
+    GST_DEBUG_OBJECT (ffmpegdec, "allocation failed");
     return ret;
+  }
+not_negotiated:
+  {
+    GST_DEBUG_OBJECT (ffmpegdec, "not negotiated");
+    return GST_FLOW_NOT_NEGOTIATED;
   }
 }
 
@@ -1189,6 +1295,7 @@ gst_ffmpegviddec_video_frame (GstFFMpegVidDec * ffmpegdec,
   GstVideoCodecFrame *out_frame;
   GstFFMpegVidDecVideoFrame *out_dframe;
   AVPacket packet;
+  GstBufferPool *pool;
 
   *ret = GST_FLOW_OK;
 
@@ -1238,8 +1345,15 @@ gst_ffmpegviddec_video_frame (GstFFMpegVidDec * ffmpegdec,
     GST_DEBUG_OBJECT (ffmpegdec, "copy pal %p %p", &packet, pal);
   }
 
+  /* This might call into get_buffer() from another thread,
+   * which would cause a deadlock. Release the lock here
+   * and taking it again later seems safe
+   * See https://bugzilla.gnome.org/show_bug.cgi?id=726020
+   */
+  GST_VIDEO_DECODER_STREAM_UNLOCK (ffmpegdec);
   len = avcodec_decode_video2 (ffmpegdec->context,
       ffmpegdec->picture, have_data, &packet);
+  GST_VIDEO_DECODER_STREAM_LOCK (ffmpegdec);
 
   GST_DEBUG_OBJECT (ffmpegdec, "after decode: len %d, have_data %d",
       len, *have_data);
@@ -1278,22 +1392,23 @@ gst_ffmpegviddec_video_frame (GstFFMpegVidDec * ffmpegdec,
       (guint64) ffmpegdec->picture->reordered_opaque);
   GST_DEBUG_OBJECT (ffmpegdec, "repeat_pict:%d",
       ffmpegdec->picture->repeat_pict);
-  GST_DEBUG_OBJECT (ffmpegdec, "interlaced_frame:%d (current:%d)",
-      ffmpegdec->picture->interlaced_frame, ffmpegdec->ctx_interlaced);
   GST_DEBUG_OBJECT (ffmpegdec, "corrupted frame: %d",
       ! !(ffmpegdec->picture->flags & AV_FRAME_FLAG_CORRUPT));
 
-  if (G_UNLIKELY (ffmpegdec->picture->interlaced_frame !=
-          ffmpegdec->ctx_interlaced)) {
-    GST_WARNING ("Change in interlacing ! picture:%d, recorded:%d",
-        ffmpegdec->picture->interlaced_frame, ffmpegdec->ctx_interlaced);
-    ffmpegdec->ctx_interlaced = ffmpegdec->picture->interlaced_frame;
-    if (!gst_ffmpegviddec_negotiate (ffmpegdec, ffmpegdec->context, TRUE))
-      goto negotiation_error;
-  }
+  if (!gst_ffmpegviddec_negotiate (ffmpegdec, ffmpegdec->context,
+          ffmpegdec->picture))
+    goto negotiation_error;
 
-  if (G_UNLIKELY (out_frame->output_buffer == NULL))
+  pool = gst_video_decoder_get_buffer_pool (GST_VIDEO_DECODER (ffmpegdec));
+  if (G_UNLIKELY (out_frame->output_buffer == NULL)) {
     *ret = get_output_buffer (ffmpegdec, out_frame);
+  } else if (G_UNLIKELY (out_frame->output_buffer->pool != pool)) {
+    GstBuffer *tmp = out_frame->output_buffer;
+    out_frame->output_buffer = NULL;
+    *ret = get_output_buffer (ffmpegdec, out_frame);
+    gst_buffer_unref (tmp);
+  }
+  gst_object_unref (pool);
 
   if (G_UNLIKELY (*ret != GST_FLOW_OK))
     goto no_output;
@@ -1302,7 +1417,7 @@ gst_ffmpegviddec_video_frame (GstFFMpegVidDec * ffmpegdec,
   if (ffmpegdec->picture->flags & AV_FRAME_FLAG_CORRUPT)
     GST_BUFFER_FLAG_SET (out_frame->output_buffer, GST_BUFFER_FLAG_CORRUPTED);
 
-  if (ffmpegdec->ctx_interlaced) {
+  if (ffmpegdec->pic_interlaced) {
     /* set interlaced flags */
     if (ffmpegdec->picture->repeat_pict)
       GST_BUFFER_FLAG_SET (out_frame->output_buffer, GST_VIDEO_BUFFER_FLAG_RFF);
@@ -1348,6 +1463,11 @@ gst_ffmpegviddec_video_frame (GstFFMpegVidDec * ffmpegdec,
     g_list_free (ol);
   }
 
+  av_frame_unref (ffmpegdec->picture);
+
+  /* FIXME: Ideally we would remap the buffer read-only now before pushing but
+   * libav might still have a reference to it!
+   */
   *ret =
       gst_video_decoder_finish_frame (GST_VIDEO_DECODER (ffmpegdec), out_frame);
 
@@ -1367,6 +1487,10 @@ no_output:
 
 negotiation_error:
   {
+    if (GST_PAD_IS_FLUSHING (GST_VIDEO_DECODER_SRC_PAD (ffmpegdec))) {
+      *ret = GST_FLOW_FLUSHING;
+      goto beach;
+    }
     GST_WARNING_OBJECT (ffmpegdec, "Error negotiating format");
     *ret = GST_FLOW_NOT_NEGOTIATED;
     goto beach;
@@ -1438,19 +1562,16 @@ gst_ffmpegviddec_drain (GstFFMpegVidDec * ffmpegdec)
   oclass = (GstFFMpegVidDecClass *) (G_OBJECT_GET_CLASS (ffmpegdec));
 
   if (oclass->in_plugin->capabilities & CODEC_CAP_DELAY) {
-    gint have_data, len, try = 0;
+    gint have_data, len;
+    GstFlowReturn ret;
 
     GST_LOG_OBJECT (ffmpegdec,
         "codec has delay capabilities, calling until ffmpeg has drained everything");
 
     do {
-      GstFlowReturn ret;
-
       len = gst_ffmpegviddec_frame (ffmpegdec, NULL, 0, &have_data, NULL, &ret);
-
-      if (len < 0 || have_data == 0)
-        break;
-    } while (try++ < 10);
+    } while (len >= 0 && have_data == 1 && ret == GST_FLOW_OK);
+    avcodec_flush_buffers (ffmpegdec->context);
   }
 }
 
@@ -1472,7 +1593,8 @@ gst_ffmpegviddec_handle_frame (GstVideoDecoder * decoder,
       GST_TIME_ARGS (frame->pts), GST_TIME_ARGS (frame->duration));
 
   if (!gst_buffer_map (frame->input_buffer, &minfo, GST_MAP_READ)) {
-    GST_ERROR_OBJECT (ffmpegdec, "Failed to map buffer");
+    GST_ELEMENT_ERROR (ffmpegdec, STREAM, DECODE, ("Decoding problem"),
+        ("Failed to map buffer for reading"));
     return GST_FLOW_ERROR;
   }
 
@@ -1522,16 +1644,16 @@ gst_ffmpegviddec_handle_frame (GstVideoDecoder * decoder,
     len =
         gst_ffmpegviddec_frame (ffmpegdec, data, size, &have_data, frame, &ret);
 
-    if (do_padding) {
-      memcpy (data + size, tmp_padding, FF_INPUT_BUFFER_PADDING_SIZE);
-    }
-
     if (ret != GST_FLOW_OK) {
       GST_LOG_OBJECT (ffmpegdec, "breaking because of flow ret %s",
           gst_flow_get_name (ret));
-      /* bad flow retun, make sure we discard all data and exit */
+      /* bad flow return, make sure we discard all data and exit */
       bsize = 0;
       break;
+    }
+
+    if (do_padding) {
+      memcpy (data + size, tmp_padding, FF_INPUT_BUFFER_PADDING_SIZE);
     }
 
     if (len == 0 && have_data == 0) {
@@ -1569,7 +1691,6 @@ gst_ffmpegviddec_handle_frame (GstVideoDecoder * decoder,
 
   return ret;
 }
-
 
 static gboolean
 gst_ffmpegviddec_start (GstVideoDecoder * decoder)
@@ -1610,14 +1731,22 @@ gst_ffmpegviddec_stop (GstVideoDecoder * decoder)
     gst_video_codec_state_unref (ffmpegdec->output_state);
   ffmpegdec->output_state = NULL;
 
-  ffmpegdec->ctx_width = 0;
-  ffmpegdec->ctx_height = 0;
+  if (ffmpegdec->internal_pool)
+    gst_object_unref (ffmpegdec->internal_pool);
+  ffmpegdec->internal_pool = NULL;
+
+  ffmpegdec->pic_pix_fmt = 0;
+  ffmpegdec->pic_width = 0;
+  ffmpegdec->pic_height = 0;
+  ffmpegdec->pic_par_n = 0;
+  ffmpegdec->pic_par_d = 0;
   ffmpegdec->ctx_ticks = 0;
   ffmpegdec->ctx_time_n = 0;
   ffmpegdec->ctx_time_d = 0;
-  ffmpegdec->ctx_pix_fmt = 0;
-  ffmpegdec->ctx_par_n = 0;
-  ffmpegdec->ctx_par_d = 0;
+
+  ffmpegdec->pool_width = 0;
+  ffmpegdec->pool_height = 0;
+  ffmpegdec->pool_format = 0;
 
   return TRUE;
 }
@@ -1651,9 +1780,11 @@ gst_ffmpegviddec_decide_allocation (GstVideoDecoder * decoder, GstQuery * query)
   GstBufferPool *pool;
   guint size, min, max;
   GstStructure *config;
-  gboolean have_videometa, have_alignment, update_pool;
+  gboolean have_pool, have_videometa, have_alignment, update_pool = FALSE;
   GstAllocator *allocator = NULL;
-  GstAllocationParams params = { 0, 15, 0, 0, };
+  GstAllocationParams params = DEFAULT_ALLOC_PARAM;
+
+  have_pool = (gst_query_get_n_allocation_pools (query) != 0);
 
   if (!GST_VIDEO_DECODER_CLASS (parent_class)->decide_allocation (decoder,
           query))
@@ -1663,7 +1794,7 @@ gst_ffmpegviddec_decide_allocation (GstVideoDecoder * decoder, GstQuery * query)
 
   if (gst_query_get_n_allocation_params (query) > 0) {
     gst_query_parse_nth_allocation_param (query, 0, &allocator, &params);
-    params.align = MAX (params.align, 15);
+    params.align = MAX (params.align, DEFAULT_STRIDE_ALIGN);
   } else {
     gst_query_add_allocation_param (query, allocator, &params);
   }
@@ -1677,6 +1808,7 @@ gst_ffmpegviddec_decide_allocation (GstVideoDecoder * decoder, GstQuery * query)
     pool = gst_video_buffer_pool_new ();
     max = 0;
     update_pool = TRUE;
+    have_pool = FALSE;
 
     /* if there is an allocator, also drop it, as it might be the reason we
      * have this limit. Default will be used */
@@ -1688,12 +1820,11 @@ gst_ffmpegviddec_decide_allocation (GstVideoDecoder * decoder, GstQuery * query)
 
   config = gst_buffer_pool_get_config (pool);
   gst_buffer_pool_config_set_params (config, state->caps, size, min, max);
-  /* we are happy with the default allocator but we would like to have 16 bytes
-   * aligned and padded memory */
   gst_buffer_pool_config_set_allocator (config, allocator, &params);
 
   have_videometa =
       gst_query_find_allocation_meta (query, GST_VIDEO_META_API_TYPE, NULL);
+
   if (have_videometa)
     gst_buffer_pool_config_add_option (config,
         GST_BUFFER_POOL_OPTION_VIDEO_META);
@@ -1701,78 +1832,80 @@ gst_ffmpegviddec_decide_allocation (GstVideoDecoder * decoder, GstQuery * query)
   have_alignment =
       gst_buffer_pool_has_option (pool, GST_BUFFER_POOL_OPTION_VIDEO_ALIGNMENT);
 
-  /* we can only enable the alignment if downstream supports the
-   * videometa api */
-  if (have_alignment && have_videometa) {
-    GstVideoAlignment align;
-    gint width, height;
-    gint linesize_align[4];
-    gint i;
-    guint edge;
+  /* If we have videometa, we never have to copy */
+  if (have_videometa && have_pool && have_alignment &&
+      gst_ffmpegviddec_can_direct_render (ffmpegdec)) {
+    GstStructure *config_copy = gst_structure_copy (config);
 
-    width = GST_VIDEO_INFO_WIDTH (&state->info);
-    height = GST_VIDEO_INFO_HEIGHT (&state->info);
-    /* let ffmpeg find the alignment and padding */
-    avcodec_align_dimensions2 (ffmpegdec->context, &width, &height,
-        linesize_align);
-    edge =
-        ffmpegdec->
-        context->flags & CODEC_FLAG_EMU_EDGE ? 0 : avcodec_get_edge_width ();
-    /* increase the size for the padding */
-    width += edge << 1;
-    height += edge << 1;
+    gst_ffmpegvideodec_prepare_dr_pool (ffmpegdec, pool, &state->info,
+        config_copy);
 
-    align.padding_top = edge;
-    align.padding_left = edge;
-    align.padding_right = width - GST_VIDEO_INFO_WIDTH (&state->info) - edge;
-    align.padding_bottom = height - GST_VIDEO_INFO_HEIGHT (&state->info) - edge;
+    /* FIXME validate and retry */
+    if (gst_buffer_pool_set_config (pool, gst_structure_copy (config_copy))) {
+      GstFlowReturn ret;
+      GstBuffer *tmp;
 
-    /* add extra padding to match libav buffer allocation sizes */
-    align.padding_bottom++;
+      gst_buffer_pool_set_active (pool, TRUE);
+      ret = gst_buffer_pool_acquire_buffer (pool, &tmp, NULL);
+      if (ret == GST_FLOW_OK) {
+        GstVideoMeta *vmeta = gst_buffer_get_video_meta (tmp);
+        gboolean same_stride = TRUE;
+        gint i;
 
-    for (i = 0; i < GST_VIDEO_MAX_PLANES; i++)
-      align.stride_align[i] =
-          (linesize_align[i] > 0 ? linesize_align[i] - 1 : 0);
+        for (i = 0; i < vmeta->n_planes; i++) {
+          if (vmeta->stride[i] != ffmpegdec->stride[i]) {
+            same_stride = FALSE;
+            break;
+          }
+        }
 
-    GST_DEBUG_OBJECT (ffmpegdec, "aligned dimension %dx%d -> %dx%d "
-        "padding t:%u l:%u r:%u b:%u, stride_align %d:%d:%d:%d",
-        GST_VIDEO_INFO_WIDTH (&state->info),
-        GST_VIDEO_INFO_HEIGHT (&state->info), width, height, align.padding_top,
-        align.padding_left, align.padding_right, align.padding_bottom,
-        align.stride_align[0], align.stride_align[1], align.stride_align[2],
-        align.stride_align[3]);
+        gst_buffer_unref (tmp);
 
-    gst_buffer_pool_config_add_option (config,
-        GST_BUFFER_POOL_OPTION_VIDEO_ALIGNMENT);
-    gst_buffer_pool_config_set_video_alignment (config, &align);
-
-    if (ffmpegdec->direct_rendering) {
-      GstFFMpegVidDecClass *oclass;
-
-      GST_DEBUG_OBJECT (ffmpegdec, "trying to enable direct rendering");
-
-      oclass = (GstFFMpegVidDecClass *) (G_OBJECT_GET_CLASS (ffmpegdec));
-
-      if (oclass->in_plugin->capabilities & CODEC_CAP_DR1) {
-        GST_DEBUG_OBJECT (ffmpegdec, "enabled direct rendering");
-        ffmpegdec->current_dr = TRUE;
-      } else {
-        GST_DEBUG_OBJECT (ffmpegdec, "direct rendering not supported");
+        if (same_stride) {
+          if (ffmpegdec->internal_pool)
+            gst_object_unref (ffmpegdec->internal_pool);
+          ffmpegdec->internal_pool = gst_object_ref (pool);
+          ffmpegdec->pool_info = state->info;
+          gst_structure_free (config);
+          goto done;
+        }
       }
     }
-  } else {
-    GST_DEBUG_OBJECT (ffmpegdec,
-        "alignment or videometa not supported, disable direct rendering");
-
-    /* disable direct rendering. This will make us use the fallback ffmpeg
-     * picture allocation code with padding etc. We will then do the final
-     * copy (with cropping) into a buffer from our pool */
-    ffmpegdec->current_dr = FALSE;
   }
 
-  /* and store */
-  gst_buffer_pool_set_config (pool, config);
+  if (have_videometa && ffmpegdec->internal_pool) {
+    update_pool = TRUE;
+    gst_object_unref (pool);
+    pool = gst_object_ref (ffmpegdec->internal_pool);
+    gst_structure_free (config);
+    goto done;
+  }
 
+  /* configure */
+  if (!gst_buffer_pool_set_config (pool, config)) {
+    gboolean working_pool = FALSE;
+    config = gst_buffer_pool_get_config (pool);
+
+    if (gst_buffer_pool_config_validate_params (config, state->caps, size, min,
+            max)) {
+      working_pool = gst_buffer_pool_set_config (pool, config);
+    } else {
+      gst_structure_free (config);
+    }
+
+    if (!working_pool) {
+      gst_object_unref (pool);
+      pool = gst_video_buffer_pool_new ();
+      config = gst_buffer_pool_get_config (pool);
+      gst_buffer_pool_config_set_params (config, state->caps, size, min, max);
+      gst_buffer_pool_config_set_allocator (config, NULL, &params);
+      gst_buffer_pool_set_config (pool, config);
+      update_pool = TRUE;
+    }
+  }
+
+done:
+  /* and store */
   if (update_pool)
     gst_query_set_nth_allocation_pool (query, 0, pool, size, min, max);
 
@@ -1792,7 +1925,7 @@ gst_ffmpegviddec_propose_allocation (GstVideoDecoder * decoder,
 
   gst_allocation_params_init (&params);
   params.flags = GST_MEMORY_FLAG_ZERO_PADDED;
-  params.align = 15;
+  params.align = DEFAULT_STRIDE_ALIGN;
   params.padding = FF_INPUT_BUFFER_PADDING_SIZE;
   /* we would like to have some padding so that we don't have to
    * memcpy. We don't suggest an allocator. */

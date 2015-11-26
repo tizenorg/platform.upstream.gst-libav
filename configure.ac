@@ -1,16 +1,16 @@
-AC_PREREQ(2.62)
+AC_PREREQ(2.69)
 
 dnl initialize autoconf
 dnl when going to/from release please set the nano (fourth number) right !
 dnl releases only do Wall, cvs and prerelease does Werror too
-AC_INIT(GStreamer libav, 1.4.1,
+AC_INIT(GStreamer libav, 1.6.1,
     http://bugzilla.gnome.org/enter_bug.cgi?product=GStreamer,
     gst-libav)
 
 AG_GST_INIT
 
 dnl initialize automake
-AM_INIT_AUTOMAKE([-Wno-portability 1.11 no-dist-gzip dist-xz tar-ustar subdir-objects])
+AM_INIT_AUTOMAKE([-Wno-portability 1.14 no-dist-gzip dist-xz tar-ustar subdir-objects])
 
 dnl define PACKAGE_VERSION_* variables
 AS_VERSION
@@ -30,10 +30,8 @@ AM_MAINTAINER_MODE([enable])
 dnl sets host_* variables
 AC_CANONICAL_HOST
 
-dnl use pretty build output with automake >= 1.11
-m4_ifdef([AM_SILENT_RULES],[AM_SILENT_RULES([yes])],
-  [AM_DEFAULT_VERBOSITY=1
-   AC_SUBST(AM_DEFAULT_VERBOSITY)])
+dnl use pretty build output by default
+AM_SILENT_RULES([yes])
 
 dnl our libraries and install dirs use major.minor as a version
 GST_API_VERSION=$PACKAGE_VERSION_MAJOR.$PACKAGE_VERSION_MINOR
@@ -42,11 +40,11 @@ GST_API_VERSION=1.0
 AC_SUBST(GST_API_VERSION)
 
 AG_GST_LIBTOOL_PREPARE
-AS_LIBTOOL(GST, 401, 0, 401)
+AS_LIBTOOL(GST, 601, 0, 601)
 
 dnl *** required versions of GStreamer stuff ***
-GST_REQ=1.4.0
-GST_PBREQ=1.4.0
+GST_REQ=1.6.1
+GST_PBREQ=1.6.1
 
 ORC_REQ=0.4.16
 ORC_CHECK([$ORC_REQ])
@@ -231,11 +229,23 @@ if test "x$HAVE_BZ2" = "xno"; then
   AC_WARN([libbz2 not found, matroska demuxer will not be able to read bz2 tracks])
 fi
 
-AC_ARG_ENABLE(lgpl,
-              [AC_HELP_STRING([--enable-lgpl], [build a LGPL licensed gst-libav])])
-AM_CONDITIONAL(GST_LIBAV_ENABLE_LGPL, test "x$enable_lgpl" = "xyes")
-if test "x$enable_lgpl" = "xyes"; then
-  AC_DEFINE([GST_LIBAV_ENABLE_LGPL], [], [Defined if building a LGPL-only version of gst-libav])
+dnl *** Check for lzma
+save_LIBS=$LIBS
+LIBS="$LIBS -llzma"
+AC_MSG_CHECKING([for lzma_version_string in -llzma])
+AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <lzma.h>]], [[const char *version = lzma_version_string ();]])],[HAVE_LZMA=yes],[HAVE_LZMA=no])
+AC_MSG_RESULT($HAVE_LZMA)
+LIBS=$save_LIBS
+AM_CONDITIONAL(HAVE_LZMA, test "x$HAVE_LZMA" = "xyes")
+if test "x$HAVE_LZMA" = "xno"; then
+    AC_WARN([lzma not found, tiff reader will not be able to read lzma files])
+fi
+
+AC_ARG_ENABLE(gpl,
+              [AC_HELP_STRING([--enable-gpl], [build a GPL licensed gst-libav])])
+AM_CONDITIONAL(GST_LIBAV_ENABLE_GPL, test "x$enable_gpl" = "xyes")
+if test "x$enable_gpl" = "xyes"; then
+  AC_DEFINE([GST_LIBAV_ENABLE_GPL], [], [Defined if building a GPL-licensed version of gst-libav])
 fi
 
 dnl *** configure external libs ***
@@ -246,7 +256,7 @@ AC_ARG_WITH(system-libav,
             [AC_HELP_STRING([--with-system-libav], [use system Libav libraries])])
 
 if test "x$with_system_libav" = "xyes"; then
-  PKG_CHECK_MODULES(LIBAV, libavformat libavcodec libavutil) 
+  PKG_CHECK_MODULES(LIBAV, libavformat libavcodec libavutil)
   PKG_CHECK_MODULES(SWSCALE, libswscale libavutil)
   saved_CPPFLAGS="$CPPFLAGS"
   CPPFLAGS="$CPPFLAGS $LIBAV_CFLAGS"
@@ -265,12 +275,13 @@ else
 
   LIBAV_DEPS="\$(top_builddir)/gst-libs/ext/libav/libavformat/libavformat.a \
               \$(top_builddir)/gst-libs/ext/libav/libavcodec/libavcodec.a \
+              \$(top_builddir)/gst-libs/ext/libav/libswresample/libswresample.a \
               \$(top_builddir)/gst-libs/ext/libav/libavutil/libavutil.a"
   if test "x$enable_static_plugins" = xyes; then
       dnl with static linking we can't use the .a archive directly as they would
       dnl be included in the final libgstlibav.a as a file and won't be usable.
       dnl libav*.a must be copied to the final destination too
-      LIBAV_LIBS="-lavformat -lavcodec -lavutil"
+      LIBAV_LIBS="-lavformat -lavcodec -lswresample -lavutil"
   else
       dnl libgstlibav.la: libs to statically link to
       LIBAV_LIBS="$LIBAV_DEPS"
@@ -306,13 +317,16 @@ else
   emblibav_configure_args="--prefix=$prefix"
 
   # Enable pic and static so that we get .a files, but with PIC code.
-  emblibav_configure_args="$emblibav_configure_args --disable-avserver --disable-avplay\
-        --disable-avconv --disable-avprobe --enable-static --enable-pic \
-	--disable-encoder=flac --disable-decoder=cavs --disable-protocols --disable-devices\
-	--disable-network --disable-hwaccels --disable-dxva2 --disable-vdpau\
-	--disable-filters --disable-doc --enable-optimizations"
+  emblibav_configure_args="$emblibav_configure_args \
+        --enable-static --enable-pic \
+        --disable-avdevice --disable-postproc --disable-avfilter \
+        --disable-programs --disable-ffserver --disable-ffplay --disable-ffprobe --disable-ffmpeg \
+        --disable-encoder=flac --disable-protocols --disable-devices \
+        --disable-network --disable-hwaccels --disable-dxva2 --disable-vdpau \
+        --disable-filters --disable-doc --disable-vda --disable-d3d11va --disable-dxva2 \
+        --disable-iconv --enable-optimizations"
 
-  if test "x$enable_lgpl" != "xyes"; then
+  if test "x$enable_gpl" == "xyes"; then
     emblibav_configure_args="$emblibav_configure_args --enable-gpl"
   fi
 

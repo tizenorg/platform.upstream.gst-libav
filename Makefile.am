@@ -16,11 +16,25 @@ ACLOCAL_AMFLAGS = -I m4 -I common/m4
 
 include $(top_srcdir)/common/release.mak
 
+if HAVE_GST_CHECK
 check-valgrind:
-	@true
+	$(MAKE) -C tests/check check-valgrind
 
 check-torture:
-	@true
+	$(MAKE) -C tests/check torture
+
+build-checks:
+	$(MAKE) -C tests/check build-checks
+else
+check-valgrind:
+	echo "'check' library not installed, skipping"
+
+check-torture:
+	echo "'check' library not installed, skipping"
+
+build-checks:
+	echo "'check' library not installed, skipping"
+endif
 
 CRUFT_FILES = \
 	$(top_builddir)/common/shave \
@@ -30,6 +44,9 @@ CRUFT_FILES = \
 	$(top_builddir)/common/m4/ltsugar.m4 \
 	$(top_builddir)/common/m4/ltversion.m4 \
 	$(top_builddir)/common/m4/lt~obsolete.m4
+
+CRUFT_DIRS = \
+	$(top_srcdir)/docs/plugins/tmpl
 
 include $(top_srcdir)/common/cruft.mak
 

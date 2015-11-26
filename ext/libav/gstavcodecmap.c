@@ -209,7 +209,7 @@ gst_ffmpeg_video_set_pix_fmts (GstCaps * caps, const enum AVPixelFormat *fmts)
 
     g_value_init (&va, GST_TYPE_LIST);
     g_value_init (&v, G_TYPE_STRING);
-    for (i = 0; i <= PIX_FMT_NB; i++) {
+    for (i = 0; i <= AV_PIX_FMT_NB; i++) {
       format = gst_ffmpeg_pixfmt_to_videoformat (i);
       if (format == GST_VIDEO_FORMAT_UNKNOWN)
         continue;
@@ -1080,22 +1080,22 @@ gst_ffmpeg_codecid_to_caps (enum AVCodecID codec_id,
         const gchar *format;
 
         switch (context->pix_fmt) {
-          case PIX_FMT_YUYV422:
+          case AV_PIX_FMT_YUYV422:
             format = "YUY2";
             break;
-          case PIX_FMT_YUV420P:
+          case AV_PIX_FMT_YUV420P:
             format = "I420";
             break;
-          case PIX_FMT_YUVA420P:
+          case AV_PIX_FMT_YUVA420P:
             format = "A420";
             break;
-          case PIX_FMT_YUV411P:
+          case AV_PIX_FMT_YUV411P:
             format = "Y41B";
             break;
-          case PIX_FMT_YUV422P:
+          case AV_PIX_FMT_YUV422P:
             format = "Y42B";
             break;
-          case PIX_FMT_YUV410P:
+          case AV_PIX_FMT_YUV410P:
             format = "YUV9";
             break;
           default:
@@ -1290,6 +1290,12 @@ gst_ffmpeg_codecid_to_caps (enum AVCodecID codec_id,
     case AV_CODEC_ID_VP8:
       caps =
           gst_ff_vid_caps_new (context, NULL, codec_id, encode, "video/x-vp8",
+          NULL);
+      break;
+
+    case AV_CODEC_ID_VP9:
+      caps =
+          gst_ff_vid_caps_new (context, NULL, codec_id, encode, "video/x-vp9",
           NULL);
       break;
 
@@ -1712,6 +1718,12 @@ gst_ffmpeg_codecid_to_caps (enum AVCodecID codec_id,
           "video/x-apple-intermediate-codec", NULL);
       break;
 
+    case AV_CODEC_ID_CAVS:
+      caps =
+          gst_ff_vid_caps_new (context, NULL, codec_id, encode,
+          "video/x-cavs", NULL);
+      break;
+
     case AV_CODEC_ID_WS_VQA:
     case AV_CODEC_ID_IDCIN:
     case AV_CODEC_ID_8BPS:
@@ -1728,7 +1740,6 @@ gst_ffmpeg_codecid_to_caps (enum AVCodecID codec_id,
     case AV_CODEC_ID_WESTWOOD_SND1:
     case AV_CODEC_ID_MMVIDEO:
     case AV_CODEC_ID_AVS:
-    case AV_CODEC_ID_CAVS:
       buildcaps = TRUE;
       break;
 
@@ -2442,53 +2453,53 @@ gst_ffmpeg_caps_to_pixfmt (const GstCaps * caps,
 
   switch (format) {
     case GST_VIDEO_FORMAT_YUY2:
-      context->pix_fmt = PIX_FMT_YUYV422;
+      context->pix_fmt = AV_PIX_FMT_YUYV422;
       break;
     case GST_VIDEO_FORMAT_I420:
-      context->pix_fmt = PIX_FMT_YUV420P;
+      context->pix_fmt = AV_PIX_FMT_YUV420P;
       break;
     case GST_VIDEO_FORMAT_A420:
-      context->pix_fmt = PIX_FMT_YUVA420P;
+      context->pix_fmt = AV_PIX_FMT_YUVA420P;
       break;
     case GST_VIDEO_FORMAT_Y41B:
-      context->pix_fmt = PIX_FMT_YUV411P;
+      context->pix_fmt = AV_PIX_FMT_YUV411P;
       break;
     case GST_VIDEO_FORMAT_Y42B:
-      context->pix_fmt = PIX_FMT_YUV422P;
+      context->pix_fmt = AV_PIX_FMT_YUV422P;
       break;
     case GST_VIDEO_FORMAT_YUV9:
-      context->pix_fmt = PIX_FMT_YUV410P;
+      context->pix_fmt = AV_PIX_FMT_YUV410P;
       break;
     case GST_VIDEO_FORMAT_Y444:
-      context->pix_fmt = PIX_FMT_YUV444P;
+      context->pix_fmt = AV_PIX_FMT_YUV444P;
       break;
     case GST_VIDEO_FORMAT_GRAY8:
-      context->pix_fmt = PIX_FMT_GRAY8;
+      context->pix_fmt = AV_PIX_FMT_GRAY8;
       break;
     case GST_VIDEO_FORMAT_xRGB:
 #if (G_BYTE_ORDER == G_BIG_ENDIAN)
-      context->pix_fmt = PIX_FMT_RGB32;
+      context->pix_fmt = AV_PIX_FMT_RGB32;
 #endif
       break;
     case GST_VIDEO_FORMAT_BGRx:
 #if (G_BYTE_ORDER == G_LITTLE_ENDIAN)
-      context->pix_fmt = PIX_FMT_RGB32;
+      context->pix_fmt = AV_PIX_FMT_RGB32;
 #endif
       break;
     case GST_VIDEO_FORMAT_RGB:
-      context->pix_fmt = PIX_FMT_RGB24;
+      context->pix_fmt = AV_PIX_FMT_RGB24;
       break;
     case GST_VIDEO_FORMAT_BGR:
-      context->pix_fmt = PIX_FMT_BGR24;
+      context->pix_fmt = AV_PIX_FMT_BGR24;
       break;
     case GST_VIDEO_FORMAT_RGB16:
-      context->pix_fmt = PIX_FMT_RGB565;
+      context->pix_fmt = AV_PIX_FMT_RGB565;
       break;
     case GST_VIDEO_FORMAT_RGB15:
-      context->pix_fmt = PIX_FMT_RGB555;
+      context->pix_fmt = AV_PIX_FMT_RGB555;
       break;
     case GST_VIDEO_FORMAT_RGB8P:
-      context->pix_fmt = PIX_FMT_PAL8;
+      context->pix_fmt = AV_PIX_FMT_PAL8;
       break;
     default:
       break;
@@ -2504,83 +2515,89 @@ typedef struct
 /* FIXME : FILLME */
 static const PixToFmt pixtofmttable[] = {
   /* GST_VIDEO_FORMAT_I420, */
-  {GST_VIDEO_FORMAT_I420, PIX_FMT_YUV420P},
+  {GST_VIDEO_FORMAT_I420, AV_PIX_FMT_YUV420P},
   /* Note : this should use a different chroma placement */
-  {GST_VIDEO_FORMAT_I420, PIX_FMT_YUVJ420P},
+  {GST_VIDEO_FORMAT_I420, AV_PIX_FMT_YUVJ420P},
 
   /* GST_VIDEO_FORMAT_YV12, */
   /* GST_VIDEO_FORMAT_YUY2, */
-  {GST_VIDEO_FORMAT_YUY2, PIX_FMT_YUYV422},
+  {GST_VIDEO_FORMAT_YUY2, AV_PIX_FMT_YUYV422},
   /* GST_VIDEO_FORMAT_UYVY, */
-  {GST_VIDEO_FORMAT_UYVY, PIX_FMT_UYVY422},
+  {GST_VIDEO_FORMAT_UYVY, AV_PIX_FMT_UYVY422},
   /* GST_VIDEO_FORMAT_AYUV, */
   /* GST_VIDEO_FORMAT_RGBx, */
   /* GST_VIDEO_FORMAT_BGRx, */
   /* GST_VIDEO_FORMAT_xRGB, */
   /* GST_VIDEO_FORMAT_xBGR, */
   /* GST_VIDEO_FORMAT_RGBA, */
-  {GST_VIDEO_FORMAT_RGBA, PIX_FMT_RGBA},
+  {GST_VIDEO_FORMAT_RGBA, AV_PIX_FMT_RGBA},
   /* GST_VIDEO_FORMAT_BGRA, */
-  {GST_VIDEO_FORMAT_BGRA, PIX_FMT_BGRA},
+  {GST_VIDEO_FORMAT_BGRA, AV_PIX_FMT_BGRA},
   /* GST_VIDEO_FORMAT_ARGB, */
-  {GST_VIDEO_FORMAT_ARGB, PIX_FMT_ARGB},
+  {GST_VIDEO_FORMAT_ARGB, AV_PIX_FMT_ARGB},
   /* GST_VIDEO_FORMAT_ABGR, */
-  {GST_VIDEO_FORMAT_ABGR, PIX_FMT_ABGR},
+  {GST_VIDEO_FORMAT_ABGR, AV_PIX_FMT_ABGR},
   /* GST_VIDEO_FORMAT_RGB, */
-  {GST_VIDEO_FORMAT_RGB, PIX_FMT_RGB24},
+  {GST_VIDEO_FORMAT_RGB, AV_PIX_FMT_RGB24},
   /* GST_VIDEO_FORMAT_BGR, */
-  {GST_VIDEO_FORMAT_BGR, PIX_FMT_BGR24},
+  {GST_VIDEO_FORMAT_BGR, AV_PIX_FMT_BGR24},
   /* GST_VIDEO_FORMAT_Y41B, */
-  {GST_VIDEO_FORMAT_Y41B, PIX_FMT_YUV411P},
+  {GST_VIDEO_FORMAT_Y41B, AV_PIX_FMT_YUV411P},
   /* GST_VIDEO_FORMAT_Y42B, */
-  {GST_VIDEO_FORMAT_Y42B, PIX_FMT_YUV422P},
-  {GST_VIDEO_FORMAT_Y42B, PIX_FMT_YUVJ422P},
+  {GST_VIDEO_FORMAT_Y42B, AV_PIX_FMT_YUV422P},
+  {GST_VIDEO_FORMAT_Y42B, AV_PIX_FMT_YUVJ422P},
   /* GST_VIDEO_FORMAT_YVYU, */
   /* GST_VIDEO_FORMAT_Y444, */
-  {GST_VIDEO_FORMAT_Y444, PIX_FMT_YUV444P},
-  {GST_VIDEO_FORMAT_Y444, PIX_FMT_YUVJ444P},
+  {GST_VIDEO_FORMAT_Y444, AV_PIX_FMT_YUV444P},
+  {GST_VIDEO_FORMAT_Y444, AV_PIX_FMT_YUVJ444P},
   /* GST_VIDEO_FORMAT_v210, */
   /* GST_VIDEO_FORMAT_v216, */
   /* GST_VIDEO_FORMAT_NV12, */
-  {GST_VIDEO_FORMAT_NV12, PIX_FMT_NV12},
+  {GST_VIDEO_FORMAT_NV12, AV_PIX_FMT_NV12},
   /* GST_VIDEO_FORMAT_NV21, */
-  {GST_VIDEO_FORMAT_NV21, PIX_FMT_NV21},
+  {GST_VIDEO_FORMAT_NV21, AV_PIX_FMT_NV21},
   /* GST_VIDEO_FORMAT_GRAY8, */
-  {GST_VIDEO_FORMAT_GRAY8, PIX_FMT_GRAY8},
+  {GST_VIDEO_FORMAT_GRAY8, AV_PIX_FMT_GRAY8},
   /* GST_VIDEO_FORMAT_GRAY16_BE, */
-  {GST_VIDEO_FORMAT_GRAY16_BE, PIX_FMT_GRAY16BE},
+  {GST_VIDEO_FORMAT_GRAY16_BE, AV_PIX_FMT_GRAY16BE},
   /* GST_VIDEO_FORMAT_GRAY16_LE, */
-  {GST_VIDEO_FORMAT_GRAY16_LE, PIX_FMT_GRAY16LE},
+  {GST_VIDEO_FORMAT_GRAY16_LE, AV_PIX_FMT_GRAY16LE},
   /* GST_VIDEO_FORMAT_v308, */
   /* GST_VIDEO_FORMAT_Y800, */
   /* GST_VIDEO_FORMAT_Y16, */
   /* GST_VIDEO_FORMAT_RGB16, */
-  {GST_VIDEO_FORMAT_RGB16, PIX_FMT_RGB565},
+  {GST_VIDEO_FORMAT_RGB16, AV_PIX_FMT_RGB565},
   /* GST_VIDEO_FORMAT_BGR16, */
   /* GST_VIDEO_FORMAT_RGB15, */
-  {GST_VIDEO_FORMAT_RGB15, PIX_FMT_RGB555},
+  {GST_VIDEO_FORMAT_RGB15, AV_PIX_FMT_RGB555},
   /* GST_VIDEO_FORMAT_BGR15, */
   /* GST_VIDEO_FORMAT_UYVP, */
   /* GST_VIDEO_FORMAT_A420, */
-  {GST_VIDEO_FORMAT_A420, PIX_FMT_YUVA420P},
+  {GST_VIDEO_FORMAT_A420, AV_PIX_FMT_YUVA420P},
   /* GST_VIDEO_FORMAT_RGB8_PALETTED, */
-  {GST_VIDEO_FORMAT_RGB8P, PIX_FMT_PAL8},
+  {GST_VIDEO_FORMAT_RGB8P, AV_PIX_FMT_PAL8},
   /* GST_VIDEO_FORMAT_YUV9, */
-  {GST_VIDEO_FORMAT_YUV9, PIX_FMT_YUV410P},
+  {GST_VIDEO_FORMAT_YUV9, AV_PIX_FMT_YUV410P},
   /* GST_VIDEO_FORMAT_YVU9, */
   /* GST_VIDEO_FORMAT_IYU1, */
   /* GST_VIDEO_FORMAT_ARGB64, */
   /* GST_VIDEO_FORMAT_AYUV64, */
   /* GST_VIDEO_FORMAT_r210, */
-  {GST_VIDEO_FORMAT_I420_10LE, PIX_FMT_YUV420P10LE},
-  {GST_VIDEO_FORMAT_I420_10BE, PIX_FMT_YUV420P10BE},
-  {GST_VIDEO_FORMAT_I422_10LE, PIX_FMT_YUV422P10LE},
-  {GST_VIDEO_FORMAT_I422_10BE, PIX_FMT_YUV422P10BE},
-  {GST_VIDEO_FORMAT_Y444_10LE, PIX_FMT_YUV444P10LE},
-  {GST_VIDEO_FORMAT_Y444_10BE, PIX_FMT_YUV444P10BE},
-  {GST_VIDEO_FORMAT_GBR, PIX_FMT_GBRP},
-  {GST_VIDEO_FORMAT_GBR_10LE, PIX_FMT_GBRP10LE},
-  {GST_VIDEO_FORMAT_GBR_10BE, PIX_FMT_GBRP10BE},
+  {GST_VIDEO_FORMAT_I420_10LE, AV_PIX_FMT_YUV420P10LE},
+  {GST_VIDEO_FORMAT_I420_10BE, AV_PIX_FMT_YUV420P10BE},
+  {GST_VIDEO_FORMAT_I422_10LE, AV_PIX_FMT_YUV422P10LE},
+  {GST_VIDEO_FORMAT_I422_10BE, AV_PIX_FMT_YUV422P10BE},
+  {GST_VIDEO_FORMAT_Y444_10LE, AV_PIX_FMT_YUV444P10LE},
+  {GST_VIDEO_FORMAT_Y444_10BE, AV_PIX_FMT_YUV444P10BE},
+  {GST_VIDEO_FORMAT_GBR, AV_PIX_FMT_GBRP},
+  {GST_VIDEO_FORMAT_GBR_10LE, AV_PIX_FMT_GBRP10LE},
+  {GST_VIDEO_FORMAT_GBR_10BE, AV_PIX_FMT_GBRP10BE},
+  {GST_VIDEO_FORMAT_A420_10LE, AV_PIX_FMT_YUVA420P10LE},
+  {GST_VIDEO_FORMAT_A420_10BE, AV_PIX_FMT_YUVA420P10BE},
+  {GST_VIDEO_FORMAT_A422_10LE, AV_PIX_FMT_YUVA422P10LE},
+  {GST_VIDEO_FORMAT_A422_10BE, AV_PIX_FMT_YUVA422P10BE},
+  {GST_VIDEO_FORMAT_A444_10LE, AV_PIX_FMT_YUVA444P10LE},
+  {GST_VIDEO_FORMAT_A444_10BE, AV_PIX_FMT_YUVA444P10BE},
 };
 
 GstVideoFormat
@@ -2596,15 +2613,34 @@ gst_ffmpeg_pixfmt_to_videoformat (enum PixelFormat pixfmt)
   return GST_VIDEO_FORMAT_UNKNOWN;
 }
 
-enum PixelFormat
-gst_ffmpeg_videoformat_to_pixfmt (GstVideoFormat format)
+static enum PixelFormat
+gst_ffmpeg_videoformat_to_pixfmt_for_codec (GstVideoFormat format,
+    const AVCodec * codec)
 {
   guint i;
 
-  for (i = 0; i < G_N_ELEMENTS (pixtofmttable); i++)
-    if (pixtofmttable[i].format == format)
-      return pixtofmttable[i].pixfmt;
-  return PIX_FMT_NONE;
+  for (i = 0; i < G_N_ELEMENTS (pixtofmttable); i++) {
+    if (pixtofmttable[i].format == format) {
+      gint j;
+
+      if (codec && codec->pix_fmts) {
+        for (j = 0; codec->pix_fmts[j] != -1; j++) {
+          if (pixtofmttable[i].pixfmt == codec->pix_fmts[j])
+            return pixtofmttable[i].pixfmt;
+        }
+      } else {
+        return pixtofmttable[i].pixfmt;
+      }
+    }
+  }
+
+  return AV_PIX_FMT_NONE;
+}
+
+enum PixelFormat
+gst_ffmpeg_videoformat_to_pixfmt (GstVideoFormat format)
+{
+  return gst_ffmpeg_videoformat_to_pixfmt_for_codec (format, NULL);
 }
 
 void
@@ -2632,7 +2668,8 @@ gst_ffmpeg_videoinfo_to_context (GstVideoInfo * info, AVCodecContext * context)
   context->sample_aspect_ratio.den = GST_VIDEO_INFO_PAR_D (info);
 
   context->pix_fmt =
-      gst_ffmpeg_videoformat_to_pixfmt (GST_VIDEO_INFO_FORMAT (info));
+      gst_ffmpeg_videoformat_to_pixfmt_for_codec (GST_VIDEO_INFO_FORMAT (info),
+      context->codec);
 }
 
 void
@@ -2930,12 +2967,8 @@ gst_ffmpeg_caps_with_codecid (enum AVCodecID codec_id,
     GST_DEBUG ("have codec data of size %" G_GSIZE_FORMAT, map.size);
 
     gst_buffer_unmap (buf, &map);
-  } else if (context->extradata == NULL && codec_id != AV_CODEC_ID_AAC_LATM &&
-      codec_id != AV_CODEC_ID_FLAC) {
-    /* no extradata, alloc dummy with 0 sized, some codecs insist on reading
-     * extradata anyway which makes then segfault. */
-    context->extradata =
-        av_mallocz (GST_ROUND_UP_16 (FF_INPUT_BUFFER_PADDING_SIZE));
+  } else {
+    context->extradata = NULL;
     context->extradata_size = 0;
     GST_DEBUG ("no codec data");
   }
@@ -3039,17 +3072,17 @@ gst_ffmpeg_caps_with_codecid (enum AVCodecID codec_id,
       if ((format = gst_structure_get_string (str, "format"))) {
 
         if (g_str_equal (format, "YUY2"))
-          context->pix_fmt = PIX_FMT_YUYV422;
+          context->pix_fmt = AV_PIX_FMT_YUYV422;
         else if (g_str_equal (format, "I420"))
-          context->pix_fmt = PIX_FMT_YUV420P;
+          context->pix_fmt = AV_PIX_FMT_YUV420P;
         else if (g_str_equal (format, "A420"))
-          context->pix_fmt = PIX_FMT_YUVA420P;
+          context->pix_fmt = AV_PIX_FMT_YUVA420P;
         else if (g_str_equal (format, "Y41B"))
-          context->pix_fmt = PIX_FMT_YUV411P;
+          context->pix_fmt = AV_PIX_FMT_YUV411P;
         else if (g_str_equal (format, "Y42B"))
-          context->pix_fmt = PIX_FMT_YUV422P;
+          context->pix_fmt = AV_PIX_FMT_YUV422P;
         else if (g_str_equal (format, "YUV9"))
-          context->pix_fmt = PIX_FMT_YUV410P;
+          context->pix_fmt = AV_PIX_FMT_YUV410P;
         else {
           GST_WARNING ("couldn't convert format %s" " to a pixel format",
               format);
@@ -3211,6 +3244,8 @@ gst_ffmpeg_formatid_to_caps (const gchar * format_name)
         "y4mversion", G_TYPE_INT, 2, NULL);
   } else if (!strcmp (format_name, "mpc")) {
     caps = gst_caps_from_string ("audio/x-musepack, streamversion = (int) 7");
+  } else if (!strcmp (format_name, "mpc8")) {
+    caps = gst_caps_from_string ("audio/x-musepack, streamversion = (int) 8");
   } else if (!strcmp (format_name, "vqf")) {
     caps = gst_caps_from_string ("audio/x-vqf");
   } else if (!strcmp (format_name, "nsv")) {
@@ -3711,6 +3746,9 @@ gst_ffmpeg_caps_to_codecid (const GstCaps * caps, AVCodecContext * context)
     video = TRUE;
   } else if (!strcmp (mimetype, "video/x-vp8")) {
     id = AV_CODEC_ID_VP8;
+    video = TRUE;
+  } else if (!strcmp (mimetype, "video/x-vp9")) {
+    id = AV_CODEC_ID_VP9;
     video = TRUE;
   } else if (!strcmp (mimetype, "video/x-flash-screen")) {
     id = AV_CODEC_ID_FLASHSV;
