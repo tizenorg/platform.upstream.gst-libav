@@ -1,6 +1,6 @@
-DISTCHECK_CONFIGURE_FLAGS=--enable-gtk-doc
+DISTCHECK_CONFIGURE_FLAGS=
 
-COMMON_SUBDIRS = ext docs common tests
+COMMON_SUBDIRS = ext common tests
 SUBDIRS = $(LIBAV_SUBDIRS) $(COMMON_SUBDIRS) pkgconfig
 DIST_SUBDIRS = $(COMMON_SUBDIRS) gst-libs pkgconfig
 
