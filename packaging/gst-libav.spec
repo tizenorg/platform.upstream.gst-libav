@@ -3,7 +3,7 @@ Summary:    Libav plugin for GStreamer
 Version:    1.6.1
 Release:    1
 Group:      Multimedia/Framework
-License:    LGPL-2.1+
+License:    LGPL-2.0+
 Source:     %{name}-%{version}.tar.gz
 Source100:  common.tar.gz
 Source101:  libav.tar.gz
@@ -52,7 +52,9 @@ rm -rf %{buildroot}
 
 
 %files
+%manifest %{name}.manifest
 %defattr(-,root,root,-)
+%license COPYING.LIB
 %{_libdir}/gstreamer-1.0/libgstlibav.so
 
 
