@@ -36,6 +36,7 @@ demuxing 30+ formats and colorspace conversion.
 NOCONFIGURE=1 ./autogen.sh
 
 export CFLAGS+=" -Wall -g -fPIC\
+ -DGST_TIZEN_MODIFICATION\
  -DLIBAV_RANK_MODIFICATION"
 
 %configure  --disable-static \
