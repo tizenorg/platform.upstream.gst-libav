@@ -33,6 +33,10 @@
 #include "gstavutils.h"
 #include "gstavprotocol.h"
 
+#ifdef GST_TIZEN_MODIFICATION
+#include "libavformat/movenc.h"
+#endif /* GST_TIZEN_MODIFICATION */
+
 typedef struct _GstFFMpegMux GstFFMpegMux;
 typedef struct _GstFFMpegMuxPad GstFFMpegMuxPad;
 
@@ -55,6 +59,11 @@ struct _GstFFMpegMux
   gboolean opened;
 
   guint videopads, audiopads;
+#ifdef GST_TIZEN_MODIFICATION
+  guint expected_trailer_size;
+  guint nb_video_frames;
+  guint nb_audio_frames;
+#endif /* GST_TIZEN_MODIFICATION */
 
   /*< private > */
   /* event_function is the collectpads default eventfunction */
@@ -94,6 +103,11 @@ enum
   PROP_0,
   PROP_PRELOAD,
   PROP_MAXDELAY
+#ifdef GST_TIZEN_MODIFICATION
+  , PROP_EXPECTED_TRAILER_SIZE,
+  PROP_NUMBER_VIDEO_FRAMES,
+  PROP_NUMBER_AUDIO_FRAMES
+#endif /* GST_TIZEN_MODIFICATION */
 };
 
 /* A number of function prototypes are given so we can refer to them later. */
@@ -125,6 +139,10 @@ static void gst_ffmpeg_mux_simple_caps_set_int_list (GstCaps * caps,
     const gchar * field, guint num, const gint * values);
 
 #define GST_FFMUX_PARAMS_QDATA g_quark_from_static_string("avmux-params")
+
+#ifdef GST_TIZEN_MODIFICATION
+static void gst_ffmpegmux_release_pad(GstElement *element, GstPad *pad);
+#endif /* GST_TIZEN_MODIFICATION */
 
 static GstElementClass *parent_class = NULL;
 
@@ -184,6 +202,276 @@ gst_ffmpegmux_is_formatter (const char *name)
       return TRUE;
   return FALSE;
 }
+
+
+#ifdef GST_TIZEN_MODIFICATION
+/* trailer entry size */
+#define ENTRY_SIZE_VIDEO_STTS         8
+#define ENTRY_SIZE_VIDEO_STSS         4
+#define ENTRY_SIZE_VIDEO_STSZ         4
+#define ENTRY_SIZE_VIDEO_STCO         4
+#define ENTRY_SIZE_AUDIO_STTS         8
+#define ENTRY_SIZE_AUDIO_STSZ         4
+#define ENTRY_SIZE_AUDIO_STCO         4
+
+#define ENTRY_SIZE_VIDEO_MPEG4_STSD   146
+#define ENTRY_SIZE_VIDEO_H263P_STSD   102
+#define ENTRY_SIZE_AUDIO_AAC_STSD     106
+#define ENTRY_SIZE_AUDIO_AMR_STSD     69
+
+#define ENTRY_SIZE_STSC               12
+#define ENTRY_SIZE_VIDEO_ST           84        /*atom size (stss + stts + stsc + stsz + stco ) * (size + atom + version + flags + sample count)+stsz(sample size) */
+#define ENTRY_SIZE_AUDIO_ST           68        /*atom size (stss + stsc + stsz + stco ) * (size + atom + version + flags + sample count)+stsz(sample size) */
+
+
+/* ffmux_adts */
+#define MUX_ADTS_NAME           "adts"
+#define MUX_AMR_NAME            "amr"
+#define MUX_MP4_NAME            "mp4"
+#define MUX_ADTS_SIZE_HEADER    8
+#define MUX_ADTS_SIZE_ENTRY     7
+#define MUX_AMR_SIZE_HEADER     6
+
+/* common */
+#define MUX_COMMON_SIZE_3GP_HEADER         290  /* ftyp + free + moov + mvhd + +iods + udta */
+#define MUX_COMMON_SIZE_MP4_HEADER         378  /* ftyp + free + moov + mvhd + +iods + udta (meta) */
+#define MUX_COMMON_SIZE_MP4_VIDEO_HEADER   305
+#define MUX_COMMON_SIZE_MP4_AUDIO_HEADER   253
+
+#define MUX_INFO_SIZE_LOCATION             106  /* loci + .xyz */
+
+
+
+static void
+update_expected_trailer_size (GstFFMpegMux * ffmpegmux)
+{
+  int i = 0;
+  guint nb_video_frames = 0;
+  guint nb_video_i_frames = 0;
+  guint nb_video_stts_entry = 0;
+  guint nb_audio_frames = 0;
+  guint nb_audio_stts_entry = 0;
+  gboolean video_stream = FALSE;
+  gboolean audio_stream = FALSE;
+  guint exp_size = 0;
+  AVCodecContext *codec_context = NULL;
+  enum AVCodecID video_codec_id;
+  enum AVCodecID audio_codec_id;
+
+  if (ffmpegmux == NULL) {
+    GST_WARNING ("ffmpegmux is NULL");
+    return;
+  }
+
+  for (i = 0; i < ffmpegmux->context->nb_streams; i++) {
+    codec_context = ffmpegmux->context->streams[i]->codec;
+    if (codec_context->codec_type == AVMEDIA_TYPE_VIDEO) {
+      nb_video_frames += codec_context->frame_number;
+      nb_video_i_frames += codec_context->i_frame_number;
+      nb_video_stts_entry += codec_context->stts_count;
+
+      video_stream = TRUE;
+      video_codec_id = codec_context->codec_id;
+    } else if (codec_context->codec_type == AVMEDIA_TYPE_AUDIO) {
+      nb_audio_frames += codec_context->frame_number;
+      nb_audio_stts_entry += codec_context->stts_count;
+
+      audio_stream = TRUE;
+      audio_codec_id = codec_context->codec_id;
+    }
+  }
+
+  /*
+     [[ Metadata Size ]]
+     - COMMON
+     ftyp = 28 (MPEG4 ftype: 28 , H263P fype: 28)
+     free = 8
+     moov = 8
+     mvhd = 108
+     iods = 24
+     **optional
+     udta = 114(meta in case of audio only) or
+     114(loci in case of video only or video/audio) or
+     202( with meta in MP4)
+     96 ( audio only with meta )
+
+     total : 290 (3GP) or 378 (MP4)
+
+     - VIDEO:MPEG4
+     trak = 8
+     tkhd = 92
+     edts = 48 ( addition )
+     mdia = 8
+     mdhd = 32
+     hdir = 45
+     minf = 8
+     vmhd = 20
+     dinf = 36 ( 8 , dref : 16 , url : 12 )
+     stbl = 8             ( common video total : 305 )
+     stsd = 146 ( addtion : 16 + , mp4v: 86 ,esds : 44 )
+     stts = 16 + (8*stts_count)
+     stss = 16 + (4*I-frame)
+     stsc = 28
+     stsz = 20 + (4*frame)
+     stco = 16 + (4*frame)
+
+     - VIDEO:H.264 = 487(or 489) + (8*stts_count) + (8*frame) + (4*I-frame)
+     trak = 8
+     tkhd = 92
+     edts = 48 ( addition )
+     mdia = 8
+     mdhd = 32
+     hdir = 45
+     minf = 8
+     vmhd = 20
+     dinf = 36 ( 8 , dref : 16 , url : 12 )
+     stbl = 8
+     stsd = 134 (SPS 9, PPS 4) or 136 (SPS 111, PPS 4)
+     stts = 16 + (8*stts_count)
+     stss = 16 + (4*I-frame)
+     stsc = 28
+     stsz = 20 + (4*frame)
+     stco = 16 + (4*frame)
+
+     - VIDEO:H.263 = 470 + + (8*stts_count) + (8*frame) + (4*I-frame)
+     trak = 8
+     tkhd = 92
+     edts = 48 ( addition )
+     mdia = 8
+     mdhd = 32
+     hdir = 45
+     minf = 8
+     vmhd = 20
+     dinf = 36
+     stbl = 8
+     stsd = 102 -> different from H.264
+     stts = 16 + (8*stts_count)
+     stss = 16 + (4*I-frame)
+     stsc = 28
+     stsz = 20 + (4*frame)
+     stco = 16 + (4*frame)
+
+     - AUDIO:AAC = 424 + + (8*stts_count) + (8*audio_frame)
+     trak = 8
+     tkhd = 92
+     mdia = 8
+     mdhd = 32
+     hdir = 45
+     minf = 8
+     smhd = 16
+     dinf = 36  ( 8 , dref : 16 , url : 12 )
+     stbl = 8  ( common video total : 253 )
+     stsd = 106 + ( addtion : 16 , mp4v: 46 ,esds : 54 )
+     stts = 16 + (8*stts_count)
+     stsc = 28
+     stsz = 20 + (4*frame)
+     stco = 16 + (4*frame)
+
+     - AUDIO:AMR = 410 + (4*audio_frame)
+     trak = 8
+     tkhd = 92
+     mdia = 8
+     mdhd = 32
+     hdir = 45
+     minf = 8
+     smhd = 16
+     dinf = 36
+     stbl = 8
+     stsd = 69 -> different from AAC
+     stts = 24 -> different from AAC
+     stsc = 28
+     stsz = 20 -> different from AAC
+     stco = 16 + (4*frame)
+   */
+
+  /* Calculate trailer size for video stream */
+  if (!strcmp (ffmpegmux->context->oformat->name, MUX_ADTS_NAME)) {
+
+  } else if (!strcmp (ffmpegmux->context->oformat->name, MUX_ADTS_NAME)) {
+
+  } else if (!strcmp (ffmpegmux->context->oformat->name, MUX_MP4_NAME)) {
+    exp_size = MUX_COMMON_SIZE_MP4_HEADER;
+  } else {
+    exp_size = MUX_COMMON_SIZE_3GP_HEADER;
+  }
+  //GST_INFO_OBJECT(ffmpegmux, "size: common size=[%d]", exp_size);
+
+  if (video_stream) {
+    /* ftyp + free + moov + mvhd + udta : H.264 -> 240, H.263 -> 236 */
+    /* trak size except frame related   : H.264 -> 489, H.263 -> 470 */
+    if (video_codec_id == AV_CODEC_ID_H263
+        || video_codec_id == AV_CODEC_ID_H263P) {
+      exp_size +=
+          MUX_COMMON_SIZE_MP4_VIDEO_HEADER + ENTRY_SIZE_VIDEO_H263P_STSD;
+    } else if (video_codec_id == AV_CODEC_ID_MPEG4) {
+      exp_size +=
+          MUX_COMMON_SIZE_MP4_VIDEO_HEADER + ENTRY_SIZE_VIDEO_MPEG4_STSD;
+    } else {
+      exp_size += 240 + 489;
+    }
+
+    //GST_INFO_OBJECT(ffmpegmux, "size: [%d]",exp_size);
+
+    /* frame related */
+    exp_size +=
+        ENTRY_SIZE_VIDEO_ST + (ENTRY_SIZE_VIDEO_STTS * nb_video_stts_entry) +
+        (ENTRY_SIZE_VIDEO_STSS * nb_video_i_frames) + (ENTRY_SIZE_STSC) +
+        ((ENTRY_SIZE_VIDEO_STSZ + ENTRY_SIZE_VIDEO_STCO) * nb_video_frames);
+  }
+  //GST_INFO_OBJECT(ffmpegmux, "size: video=[%d] size=[%d], stts-entry=[%d], i-frame=[%d], video-sample=[%d]", video_stream, exp_size,nb_video_stts_entry,nb_video_i_frames,nb_video_frames);
+
+  if (audio_stream) {
+    /* Calculate trailer size for audio stream */
+    if (!strcmp (ffmpegmux->context->oformat->name, MUX_ADTS_NAME)) {
+      /* avmux_adts */
+      exp_size +=
+          MUX_ADTS_SIZE_HEADER + (MUX_ADTS_SIZE_ENTRY * nb_audio_frames);
+    } else if (!strcmp (ffmpegmux->context->oformat->name, MUX_AMR_NAME)) {
+      /* only audio avmux_amr */
+      exp_size = MUX_AMR_SIZE_HEADER;
+    } else {
+      /* avmux_3gp , avmux_mp4 */
+      if (!video_stream) {
+        /* audio only does not contain location info now */
+        exp_size -= MUX_INFO_SIZE_LOCATION;
+      }
+      /* others - avmux_3gp/mp4/amr */
+      if (audio_codec_id == AV_CODEC_ID_AMR_NB) {
+        /* AMR_NB codec */
+        exp_size +=
+            MUX_COMMON_SIZE_MP4_AUDIO_HEADER + ENTRY_SIZE_AUDIO_AMR_STSD;
+
+        //GST_INFO_OBJECT(ffmpegmux, "size: [%d]",exp_size);
+
+        exp_size +=
+            ENTRY_SIZE_AUDIO_ST +
+            (ENTRY_SIZE_AUDIO_STTS * nb_audio_stts_entry) + (ENTRY_SIZE_STSC) +
+            (ENTRY_SIZE_AUDIO_STCO * nb_audio_frames);
+      } else {
+        /* AAC codec */
+        exp_size +=
+            MUX_COMMON_SIZE_MP4_AUDIO_HEADER + ENTRY_SIZE_AUDIO_AAC_STSD;
+
+        //GST_INFO_OBJECT(ffmpegmux, "size: [%d]",exp_size);
+
+        exp_size +=
+            ENTRY_SIZE_AUDIO_ST +
+            (ENTRY_SIZE_AUDIO_STTS * nb_audio_stts_entry) + (ENTRY_SIZE_STSC) +
+            ((ENTRY_SIZE_AUDIO_STSZ + ENTRY_SIZE_AUDIO_STCO) * nb_audio_frames);
+      }
+
+    }
+  }
+  //GST_INFO_OBJECT(ffmpegmux, "size: audio=[%d], size=[%d], stts-entry=[%d], audio-sample=[%d]", audio_stream, exp_size, nb_audio_stts_entry, nb_audio_frames);
+
+  ffmpegmux->expected_trailer_size = exp_size;
+  ffmpegmux->nb_video_frames = nb_video_frames;
+  ffmpegmux->nb_audio_frames = nb_audio_frames;
+
+  return;
+}
+#endif /* GST_TIZEN_MODIFICATION */
+
 
 static void
 gst_ffmpegmux_base_init (gpointer g_class)
@@ -290,6 +578,9 @@ gst_ffmpegmux_class_init (GstFFMpegMuxClass * klass)
 {
   GObjectClass *gobject_class;
   GstElementClass *gstelement_class;
+#ifdef GST_TIZEN_MODIFICATION
+  GParamSpec * tspec = NULL;
+#endif /* GST_TIZEN_MODIFICATION */
 
   gobject_class = (GObjectClass *) klass;
   gstelement_class = (GstElementClass *) klass;
@@ -312,6 +603,35 @@ gst_ffmpegmux_class_init (GstFFMpegMuxClass * klass)
   gstelement_class->request_new_pad = gst_ffmpegmux_request_new_pad;
   gstelement_class->change_state = gst_ffmpegmux_change_state;
   gobject_class->finalize = gst_ffmpegmux_finalize;
+
+#ifdef GST_TIZEN_MODIFICATION
+  gstelement_class->release_pad = gst_ffmpegmux_release_pad;
+
+  /* properties */
+  tspec = g_param_spec_uint("expected-trailer-size", "Expected Trailer Size",
+    "Expected trailer size (bytes)",
+    0, G_MAXUINT, 0, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  if (tspec)
+    g_object_class_install_property(gobject_class, PROP_EXPECTED_TRAILER_SIZE, tspec);
+  else
+    GST_ERROR("g_param_spec failed for \"expected-trailer-size\"");
+
+  tspec = g_param_spec_uint("number-video-frames", "Number of video frames",
+    "Current number of video frames",
+    0, G_MAXUINT, 0, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  if (tspec)
+    g_object_class_install_property (gobject_class, PROP_NUMBER_VIDEO_FRAMES, tspec);
+  else
+    GST_ERROR("g_param_spec failed for \"number-video-frames\"");
+
+  tspec = g_param_spec_uint("number-audio-frames", "Number of audio frames",
+    "Current number of audio frames",
+    0, G_MAXUINT, 0, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  if (tspec)
+    g_object_class_install_property (gobject_class, PROP_NUMBER_AUDIO_FRAMES, tspec);
+  else
+    GST_ERROR("g_param_spec failed for \"number-audio-frames\"");
+#endif /* GST_TIZEN_MODIFICATION */
 }
 
 static void
@@ -337,7 +657,67 @@ gst_ffmpegmux_init (GstFFMpegMux * ffmpegmux, GstFFMpegMuxClass * g_class)
   ffmpegmux->videopads = 0;
   ffmpegmux->audiopads = 0;
   ffmpegmux->max_delay = 0;
+
+#ifdef GST_TIZEN_MODIFICATION
+  ffmpegmux->expected_trailer_size = 0;
+  ffmpegmux->nb_video_frames = 0;
+  ffmpegmux->nb_audio_frames = 0;
+#endif /* GST_TIZEN_MODIFICATION */
 }
+
+
+#ifdef GST_TIZEN_MODIFICATION
+static void
+gst_ffmpegmux_release_pad (GstElement * element, GstPad * pad)
+{
+  GstFFMpegMux *ffmpegmux = (GstFFMpegMux *) element;
+  GstFFMpegMuxPad *collect_pad;
+  AVStream *st;
+  int i;
+  collect_pad = (GstFFMpegMuxPad *)gst_pad_get_element_private(pad);
+
+  GST_DEBUG ("Release requested pad[%s:%s]", GST_DEBUG_PAD_NAME(pad));
+  st = ffmpegmux->context->streams[collect_pad->padnum];
+  if (st) {
+    if (st->codec) {
+      if (st->codec->codec_type == AVMEDIA_TYPE_VIDEO) {
+        ffmpegmux->videopads--;
+      } else {
+        ffmpegmux->audiopads--;
+      }
+      if (st->codec->extradata) {
+        av_free(st->codec->extradata);
+        st->codec->extradata = NULL;
+      }
+      g_free(st->codec);
+      st->codec = NULL;
+    }
+    if (ffmpegmux->context->priv_data) {
+      MOVMuxContext *mov = ffmpegmux->context->priv_data;
+      if (mov && mov->tracks) {
+        for (i = 0 ; i < ffmpegmux->context->nb_streams ; i++) {
+          MOVTrack *trk = &mov->tracks[i];
+          if (trk && trk->vos_data) {
+            av_free(trk->vos_data);
+            trk->vos_data = NULL;
+          }
+        }
+        av_free(mov->tracks);
+        mov->tracks = NULL;
+      }
+      av_free(ffmpegmux->context->priv_data);
+      ffmpegmux->context->priv_data = NULL;
+    }
+    ffmpegmux->context->nb_streams--;
+    g_free(st);
+    st = NULL;
+  }
+  gst_collect_pads_remove_pad(ffmpegmux->collect, pad);
+  gst_element_remove_pad(element, pad);
+
+  return;
+}
+#endif /* GST_TIZEN_MODIFICATION */
 
 static void
 gst_ffmpegmux_set_property (GObject * object, guint prop_id,
@@ -375,6 +755,17 @@ gst_ffmpegmux_get_property (GObject * object, guint prop_id, GValue * value,
     case PROP_MAXDELAY:
       g_value_set_int (value, src->max_delay);
       break;
+#ifdef GST_TIZEN_MODIFICATION
+    case PROP_EXPECTED_TRAILER_SIZE:
+      g_value_set_uint(value, src->expected_trailer_size);
+      break;
+    case PROP_NUMBER_VIDEO_FRAMES:
+      g_value_set_uint(value, src->nb_video_frames);
+      break;
+    case PROP_NUMBER_AUDIO_FRAMES:
+      g_value_set_uint(value, src->nb_audio_frames);
+      break;
+#endif /* GST_TIZEN_MODIFICATION */
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -490,12 +881,21 @@ gst_ffmpegmux_setcaps (GstPad * pad, GstCaps * caps)
    * codec aspect. */
   st->sample_aspect_ratio = st->codec->sample_aspect_ratio;
 
+#ifdef GST_TIZEN_MODIFICATION
+  /* ref counting bug fix */
+  gst_object_unref(ffmpegmux);
+#endif /* GST_TIZEN_MODIFICATION */
+
   GST_LOG_OBJECT (pad, "accepted caps %" GST_PTR_FORMAT, caps);
   return TRUE;
 
   /* ERRORS */
 not_accepted:
   {
+#ifdef GST_TIZEN_MODIFICATION
+    /* ref counting bug fix */
+    gst_object_unref (ffmpegmux);
+#endif /* GST_TIZEN_MODIFICATION */
     GST_LOG_OBJECT (pad, "rejecting caps %" GST_PTR_FORMAT, caps);
     return FALSE;
   }
@@ -728,6 +1128,11 @@ gst_ffmpegmux_collected (GstCollectPads * pads, gpointer user_data)
     gboolean need_free = FALSE;
     GstMapInfo map;
 
+#ifdef GST_TIZEN_MODIFICATION
+    av_init_packet (&pkt);
+    pkt.is_mux = 1;
+#endif /* GST_TIZEN_MODIFICATION */
+
     /* push out current buffer */
     buf =
         gst_collect_pads_pop (ffmpegmux->collect, (GstCollectData *) best_pad);
@@ -735,8 +1140,14 @@ gst_ffmpegmux_collected (GstCollectPads * pads, gpointer user_data)
     ffmpegmux->context->streams[best_pad->padnum]->codec->frame_number++;
 
     /* set time */
+#ifdef GST_TIZEN_MODIFICATION
+    if (ffmpegmux->context->streams[best_pad->padnum]->codec->codec_type == AVMEDIA_TYPE_VIDEO)
+        pkt.pts = GST_TIME_AS_MSECONDS(GST_BUFFER_TIMESTAMP(buf));
+    else
+#else /* GST_TIZEN_MODIFICATION */
     pkt.pts = gst_ffmpeg_time_gst_to_ff (GST_BUFFER_TIMESTAMP (buf),
         ffmpegmux->context->streams[best_pad->padnum]->time_base);
+#endif /* GST_TIZEN_MODIFICATION */
     pkt.dts = pkt.pts;
 
     if (strcmp (ffmpegmux->context->oformat->name, "gif") == 0) {
@@ -771,12 +1182,65 @@ gst_ffmpegmux_collected (GstCollectPads * pads, gpointer user_data)
     if (!GST_BUFFER_FLAG_IS_SET (buf, GST_BUFFER_FLAG_DELTA_UNIT))
       pkt.flags |= AV_PKT_FLAG_KEY;
 
+#ifdef GST_TIZEN_MODIFICATION
+    if (ffmpegmux->context->streams[best_pad->padnum]->codec->codec_type ==
+        AVMEDIA_TYPE_VIDEO) {
+      static int last_duration = -1;
+      static int64_t last_dts = -1;
+      if (GST_BUFFER_DURATION_IS_VALID (buf)) {
+        pkt.duration = GST_TIME_AS_MSECONDS (GST_BUFFER_DURATION (buf));
+      } else {
+        pkt.duration = 0;
+      }
+
+      if (last_dts == -1) {
+        /* first time */
+        ffmpegmux->context->streams[best_pad->padnum]->codec->stts_count++;
+      } else {
+        /* check real duration : current dts - last dts */
+        if (last_duration != (pkt.dts - last_dts)) {
+          last_duration = pkt.dts - last_dts;
+          ffmpegmux->context->streams[best_pad->padnum]->codec->stts_count++;
+        }
+      }
+      last_dts = pkt.dts;
+      if (!GST_BUFFER_FLAG_IS_SET (buf, GST_BUFFER_FLAG_DELTA_UNIT)) {
+        ffmpegmux->context->streams[best_pad->padnum]->codec->i_frame_number++;
+      }
+    } else {
+      static int last_duration_audio = -1;
+      static int64_t last_dts_audio = -1;
+
+      if (GST_BUFFER_DURATION_IS_VALID (buf)) {
+        if (last_dts_audio == -1) {
+          /* first time */
+          ffmpegmux->context->streams[best_pad->padnum]->codec->stts_count++;
+        } else {
+          /* check real duration : current dts - last dts */
+          if (last_duration_audio != (pkt.dts - last_dts_audio)) {
+            last_duration_audio = pkt.dts - last_dts_audio;
+            ffmpegmux->context->streams[best_pad->padnum]->codec->stts_count++;
+          }
+        }
+        last_dts_audio = pkt.dts;
+
+        pkt.duration =
+            gst_ffmpeg_time_gst_to_ff (GST_BUFFER_DURATION (buf),
+            ffmpegmux->context->streams[best_pad->padnum]->time_base);
+      } else {
+        pkt.duration = 0;
+      }
+    }
+
+    update_expected_trailer_size (ffmpegmux);
+#else /* GST_TIZEN_MODIFICATION */
     if (GST_BUFFER_DURATION_IS_VALID (buf))
       pkt.duration =
           gst_ffmpeg_time_gst_to_ff (GST_BUFFER_DURATION (buf),
           ffmpegmux->context->streams[best_pad->padnum]->time_base);
     else
       pkt.duration = 0;
+#endif /* GST_TIZEN_MODIFICATION */
     av_write_frame (ffmpegmux->context, &pkt);
     if (need_free) {
       g_free (pkt.data);
@@ -824,11 +1288,24 @@ gst_ffmpegmux_change_state (GstElement * element, GstStateChange transition)
     case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
       break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
+#ifdef GST_TIZEN_MODIFICATION
+    {
+      int i = 0;
+#endif /* GST_TIZEN_MODIFICATION */
       gst_tag_setter_reset_tags (GST_TAG_SETTER (ffmpegmux));
       if (ffmpegmux->opened) {
         ffmpegmux->opened = FALSE;
         gst_ffmpegdata_close (ffmpegmux->context->pb);
       }
+#ifdef GST_TIZEN_MODIFICATION
+      for (i = 0 ; i < ffmpegmux->context->nb_streams ; i++) {
+        ffmpegmux->context->streams[i]->start_time = AV_NOPTS_VALUE;
+        ffmpegmux->context->streams[i]->duration = AV_NOPTS_VALUE;
+        ffmpegmux->context->streams[i]->cur_dts = AV_NOPTS_VALUE;
+
+      }
+    }
+#endif
       break;
     case GST_STATE_CHANGE_READY_TO_NULL:
       break;
