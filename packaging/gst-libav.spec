@@ -42,7 +42,8 @@ export CFLAGS+=" -Wall -g -fPIC\
 %configure  --disable-static \
 	--enable-lgpl\
 	--prefix=%{_prefix} \
-	--with-html-dir=/tmp/dump
+	--with-html-dir=/tmp/dump\
+	--with-libav-extra-configure="--disable-demuxer=mm"
 
 
 make %{?jobs:-j%jobs}
