@@ -1,7 +1,7 @@
 Name:       gst-libav
 Summary:    Libav plugin for GStreamer
 Version:    1.6.1
-Release:    2
+Release:    3
 Group:      Multimedia/Framework
 License:    LGPL-2.0+
 Source:     %{name}-%{version}.tar.gz
@@ -41,9 +41,10 @@ export CFLAGS+=" -Wall -g -fPIC\
 
 %configure  --disable-static \
 	--enable-lgpl\
+	--disable-jpeg\
 	--prefix=%{_prefix} \
 	--with-html-dir=/tmp/dump\
-	--with-libav-extra-configure="--disable-demuxer=mm"
+	--with-libav-extra-configure="--disable-demuxer=mm --disable-decoder=jpeg2000 --disable-decoder=aacps"
 
 
 make %{?jobs:-j%jobs}
