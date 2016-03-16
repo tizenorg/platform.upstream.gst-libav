@@ -2967,8 +2967,12 @@ gst_ffmpeg_caps_with_codecid (enum AVCodecID codec_id,
     GST_DEBUG ("have codec data of size %" G_GSIZE_FORMAT, map.size);
 
     gst_buffer_unmap (buf, &map);
+#ifdef GST_TIZEN_MODIFICATION
+  } else if (!context->extradata) {
+#else
   } else {
     context->extradata = NULL;
+#endif
     context->extradata_size = 0;
     GST_DEBUG ("no codec data");
   }
